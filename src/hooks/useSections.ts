@@ -8,6 +8,26 @@ type SectionRow = Database['public']['Tables']['sections']['Row']
 type SectionInsert = Database['public']['Tables']['sections']['Insert']
 type SectionUpdate = Database['public']['Tables']['sections']['Update']
 
+// Browser-compatible ArrayBuffer to base64 conversion
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
+// Browser-compatible base64 to ArrayBuffer conversion
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binaryString = atob(base64)
+  const bytes = new Uint8Array(binaryString.length)
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+  return bytes.buffer
+}
+
 // Convert database row to Section type
 function dbRowToSection(row: SectionRow): Section {
   return {
@@ -94,8 +114,8 @@ export function useSections() {
         
         console.log('Storing template file data...')
         
-        // Store template file data separately
-        const fileData = Buffer.from(updates.template.fileData).toString('base64')
+        // Store template file data separately using browser-compatible conversion
+        const fileData = arrayBufferToBase64(updates.template.fileData)
         const { error: fileError } = await supabase
           .from('template_files')
           .upsert({
@@ -180,8 +200,8 @@ export function useSections() {
         return null
       }
 
-      const buffer = Buffer.from(data.file_data, 'base64')
-      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+      // Use browser-compatible conversion from base64 to ArrayBuffer
+      return base64ToArrayBuffer(data.file_data)
     } catch (error) {
       console.error('Error processing template file:', error)
       return null
