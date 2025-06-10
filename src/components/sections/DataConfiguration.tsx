@@ -17,7 +17,7 @@ interface DataConfigurationProps {
 }
 
 export function DataConfiguration({ section }: DataConfigurationProps) {
-  const { updateSection } = useSections()
+  const { updateSection, isUpdating } = useSections()
   const [csvData, setCsvData] = useState<CSVParseResult | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -69,7 +69,8 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
       'application/vnd.ms-excel': ['.csv'],
       'text/plain': ['.csv']
     },
-    maxFiles: 1
+    maxFiles: 1,
+    disabled: isProcessing || isUpdating
   })
 
   const handleMappingChange = (pdfField: string, csvColumn: string) => {
@@ -117,7 +118,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
     }
   }
 
-  const importUsers = () => {
+  const importUsers = async () => {
     if (!csvData) return
 
     const users: User[] = csvData.data.map((row: any) => ({
@@ -128,15 +129,28 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
     const hasTemplate = section.template
     const newStatus = hasTemplate && users.length > 0 ? 'ready' : hasTemplate ? 'template-configured' : 'users-loaded'
 
-    updateSection({
-      id: section.id,
-      updates: {
-        users,
-        status: newStatus
-      }
+    // Use a promise to handle the mutation
+    await new Promise<void>((resolve, reject) => {
+      updateSection(
+        {
+          id: section.id,
+          updates: {
+            users,
+            status: newStatus
+          }
+        },
+        {
+          onSuccess: () => {
+            setCsvData(null)
+            resolve()
+          },
+          onError: (error: any) => {
+            setError(`Failed to import users: ${error.message}`)
+            reject(error)
+          }
+        }
+      )
     })
-    
-    setCsvData(null)
   }
 
   const getMappingStatus = () => {
@@ -207,7 +221,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                 isDragActive 
                   ? 'border-blue-400 bg-blue-50' 
                   : 'border-gray-300 hover:border-gray-400'
-              }`}
+              } ${(isProcessing || isUpdating) ? 'cursor-not-allowed opacity-50' : ''}`}
             >
               <input {...getInputProps()} />
               <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
@@ -217,7 +231,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
               <p className="text-gray-600 mb-4">
                 Upload a CSV file with user data to map to your PDF template fields
               </p>
-              <Button variant="outline" disabled={isProcessing}>
+              <Button variant="outline" disabled={isProcessing || isUpdating}>
                 {isProcessing ? 'Processing...' : 'Choose File'}
               </Button>
             </div>
@@ -303,7 +317,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                       <TableCell className="font-medium">
                         {field.name}
                         {field.required && (
-                          <Badge variant="destructive\" className="ml-2 text-xs">
+                          <Badge variant="destructive" className="ml-2 text-xs">
                             Required
                           </Badge>
                         )}
@@ -315,6 +329,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                         <Select
                           value={mapping?.csvColumnName || ''}
                           onValueChange={(value) => handleMappingChange(field.name, value)}
+                          disabled={isUpdating}
                         >
                           <SelectTrigger className="w-full">
                             <SelectValue placeholder="Select CSV column..." />
@@ -335,6 +350,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                           value={mapping?.defaultValue || ''}
                           onChange={(e) => handleDefaultValueChange(field.name, e.target.value)}
                           className="w-full"
+                          disabled={isUpdating}
                         />
                       </TableCell>
                       <TableCell>
@@ -352,10 +368,13 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
           <div className="flex justify-end mt-6">
             <Button 
               onClick={importUsers}
-              disabled={mappingStatus && mappingStatus.requiredMapped < mappingStatus.required}
+              disabled={
+                (mappingStatus && mappingStatus.requiredMapped < mappingStatus.required) || 
+                isUpdating
+              }
               className="flex items-center gap-2"
             >
-              Import Users
+              {isUpdating ? 'Importing...' : 'Import Users'}
               <ArrowRight className="h-4 w-4" />
             </Button>
           </div>

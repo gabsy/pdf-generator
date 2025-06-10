@@ -13,9 +13,9 @@ function dbRowToSection(row: SectionRow): Section {
   return {
     id: row.id,
     name: row.name,
-    description: row.description,
-    createdAt: new Date(row.created_at),
-    status: row.status,
+    description: row.description || '',
+    createdAt: new Date(row.created_at!),
+    status: row.status || 'draft',
     users: row.users_data ? JSON.parse(row.users_data) : [],
     fieldMappings: row.field_mappings ? JSON.parse(row.field_mappings) : [],
     template: row.template_file_name ? {
@@ -76,13 +76,15 @@ export function useSections() {
 
   const updateSectionMutation = useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<Section> }) => {
+      console.log('Updating section with:', { id, updates })
+      
       const updateData: SectionUpdate = {}
       
-      if (updates.name) updateData.name = updates.name
-      if (updates.description) updateData.description = updates.description
-      if (updates.status) updateData.status = updates.status
-      if (updates.users) updateData.users_data = JSON.stringify(updates.users)
-      if (updates.fieldMappings) updateData.field_mappings = JSON.stringify(updates.fieldMappings)
+      if (updates.name !== undefined) updateData.name = updates.name
+      if (updates.description !== undefined) updateData.description = updates.description
+      if (updates.status !== undefined) updateData.status = updates.status
+      if (updates.users !== undefined) updateData.users_data = JSON.stringify(updates.users)
+      if (updates.fieldMappings !== undefined) updateData.field_mappings = JSON.stringify(updates.fieldMappings)
       
       if (updates.template) {
         updateData.template_file_name = updates.template.fileName
@@ -90,16 +92,27 @@ export function useSections() {
         updateData.template_extracted_fields = JSON.stringify(updates.template.extractedFields)
         updateData.template_uploaded_at = updates.template.uploadedAt.toISOString()
         
+        console.log('Storing template file data...')
+        
         // Store template file data separately
         const fileData = Buffer.from(updates.template.fileData).toString('base64')
-        await supabase
+        const { error: fileError } = await supabase
           .from('template_files')
           .upsert({
             section_id: id,
             file_name: updates.template.fileName,
             file_data: fileData
           })
+        
+        if (fileError) {
+          console.error('Error storing template file:', fileError)
+          throw fileError
+        }
+        
+        console.log('Template file stored successfully')
       }
+
+      console.log('Updating section with data:', updateData)
 
       const { data, error } = await supabase
         .from('sections')
@@ -108,12 +121,30 @@ export function useSections() {
         .select()
         .single()
 
-      if (error) throw error
+      if (error) {
+        console.error('Error updating section:', error)
+        throw error
+      }
+      
+      console.log('Section updated successfully:', data)
       return dbRowToSection(data)
     },
-    onSuccess: () => {
+    onSuccess: (updatedSection) => {
+      console.log('Section update successful, invalidating queries')
+      // Invalidate and refetch the sections query
       queryClient.invalidateQueries({ queryKey: ['sections', user?.id] })
+      
+      // Also update the specific section in the cache
+      queryClient.setQueryData(['sections', user?.id], (oldData: Section[] | undefined) => {
+        if (!oldData) return [updatedSection]
+        return oldData.map(section => 
+          section.id === updatedSection.id ? updatedSection : section
+        )
+      })
     },
+    onError: (error) => {
+      console.error('Section update failed:', error)
+    }
   })
 
   const deleteSectionMutation = useMutation({
@@ -137,16 +168,24 @@ export function useSections() {
   })
 
   const getTemplateFile = async (sectionId: string): Promise<ArrayBuffer | null> => {
-    const { data, error } = await supabase
-      .from('template_files')
-      .select('file_data')
-      .eq('section_id', sectionId)
-      .single()
+    try {
+      const { data, error } = await supabase
+        .from('template_files')
+        .select('file_data')
+        .eq('section_id', sectionId)
+        .single()
 
-    if (error || !data) return null
+      if (error || !data) {
+        console.error('Error fetching template file:', error)
+        return null
+      }
 
-    const buffer = Buffer.from(data.file_data, 'base64')
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+      const buffer = Buffer.from(data.file_data, 'base64')
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+    } catch (error) {
+      console.error('Error processing template file:', error)
+      return null
+    }
   }
 
   return {

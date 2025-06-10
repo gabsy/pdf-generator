@@ -4,7 +4,7 @@ import { Upload, FileText, Download, AlertCircle, CheckCircle, Loader2 } from 'l
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
-import { Section, PDFField } from '../../types'
+import { Section, PDFField } from '../types'
 import { useSections } from '../../hooks/useSections'
 import { SamplePDFGenerator } from './SamplePDFGenerator'
 import { PDFDocument } from 'pdf-lib'
@@ -14,7 +14,7 @@ interface TemplateConfigurationProps {
 }
 
 export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
-  const { updateSection } = useSections()
+  const { updateSection, isUpdating } = useSections()
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [uploadProgress, setUploadProgress] = useState<string>('')
@@ -155,28 +155,37 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
         fieldsCount: template.extractedFields.length
       })
 
-      try {
-        await updateSection({ 
-          id: section.id, 
-          updates: { 
-            template,
-            status: section.users.length > 0 ? 'ready' : 'template-configured'
+      // Use a promise to handle the mutation
+      await new Promise<void>((resolve, reject) => {
+        updateSection(
+          { 
+            id: section.id, 
+            updates: { 
+              template,
+              status: section.users.length > 0 ? 'ready' : 'template-configured'
+            }
+          },
+          {
+            onSuccess: () => {
+              console.log('Template updated successfully')
+              setUploadProgress('Complete!')
+              setDebugInfo(prev => prev + '\nUpload successful!')
+              
+              // Clear progress after a short delay
+              setTimeout(() => {
+                setUploadProgress('')
+                setDebugInfo('')
+              }, 2000)
+              
+              resolve()
+            },
+            onError: (updateError: any) => {
+              console.error('Error updating section:', updateError)
+              reject(new Error(`Failed to save template: ${updateError instanceof Error ? updateError.message : 'Unknown error'}`))
+            }
           }
-        })
-        
-        console.log('Template updated successfully')
-        setUploadProgress('Complete!')
-        setDebugInfo(prev => prev + '\nUpload successful!')
-        
-        // Clear progress after a short delay
-        setTimeout(() => {
-          setUploadProgress('')
-          setDebugInfo('')
-        }, 2000)
-      } catch (updateError) {
-        console.error('Error updating section:', updateError)
-        throw new Error(`Failed to save template: ${updateError instanceof Error ? updateError.message : 'Unknown error'}`)
-      }
+        )
+      })
 
     } catch (err) {
       console.error('Error processing PDF:', err)
@@ -216,7 +225,7 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
       console.log('No file to process')
       setError('No file selected')
     }
-  }, [section.id, updateSection])
+  }, [section.id, section.users.length, updateSection])
 
   const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
     onDrop,
@@ -226,6 +235,7 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
     maxFiles: 1,
     maxSize: 10 * 1024 * 1024, // 10MB
     multiple: false,
+    disabled: isProcessing || isUpdating,
     onDropRejected: (rejectedFiles) => {
       console.log('Drop rejected:', rejectedFiles)
     },
@@ -294,7 +304,9 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
   const getDropzoneStyles = () => {
     let baseStyles = "border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors"
     
-    if (isDragReject) {
+    if (isProcessing || isUpdating) {
+      return `${baseStyles} border-gray-300 bg-gray-50 cursor-not-allowed`
+    } else if (isDragReject) {
       return `${baseStyles} border-red-400 bg-red-50`
     } else if (isDragActive) {
       return `${baseStyles} border-blue-400 bg-blue-50`
@@ -302,6 +314,8 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
       return `${baseStyles} border-gray-300 hover:border-gray-400`
     }
   }
+
+  const isDisabled = isProcessing || isUpdating
 
   return (
     <div className="space-y-6">
@@ -318,10 +332,12 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
               className={getDropzoneStyles()}
             >
               <input {...getInputProps()} />
-              {isProcessing ? (
+              {isProcessing || isUpdating ? (
                 <div className="flex flex-col items-center">
                   <Loader2 className="h-12 w-12 text-blue-600 animate-spin mb-4" />
-                  <p className="text-lg font-medium text-gray-900 mb-2">Processing PDF...</p>
+                  <p className="text-lg font-medium text-gray-900 mb-2">
+                    {isProcessing ? 'Processing PDF...' : 'Saving template...'}
+                  </p>
                   {uploadProgress && (
                     <p className="text-sm text-gray-600 mb-2">{uploadProgress}</p>
                   )}
@@ -351,7 +367,7 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
                   <p className="text-sm text-gray-500 mb-4">
                     Maximum file size: 10MB
                   </p>
-                  <Button variant="outline" disabled={isProcessing}>
+                  <Button variant="outline" disabled={isDisabled}>
                     Choose PDF File
                   </Button>
                 </>
@@ -414,6 +430,7 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
                   size="sm"
                   onClick={removeTemplate}
                   className="text-red-600 hover:text-red-700"
+                  disabled={isUpdating}
                 >
                   Replace Template
                 </Button>
