@@ -320,7 +320,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                       <TableCell className="font-medium">
                         {field.name}
                         {field.required && (
-                          <Badge variant="destructive" className="ml-2 text-xs">
+                          <Badge variant="destructive\" className="ml-2 text-xs">
                             Required
                           </Badge>
                         )}
