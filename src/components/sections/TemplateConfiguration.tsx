@@ -6,6 +6,7 @@ import { Badge } from '../ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import { Section, PDFField } from '../../types'
 import { useSections } from '../../hooks/useSections'
+import { SamplePDFGenerator } from './SamplePDFGenerator'
 import { PDFDocument } from 'pdf-lib'
 
 interface TemplateConfigurationProps {
@@ -234,6 +235,9 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
         
         {!section.template ? (
           <div className="space-y-4">
+            {/* Sample PDF Generator */}
+            <SamplePDFGenerator />
+            
             <div
               {...getRootProps()}
               className={getDropzoneStyles()}
@@ -281,9 +285,9 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
               </div>
             )}
 
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-medium text-blue-900 mb-2">Requirements:</h4>
-              <ul className="text-sm text-blue-800 space-y-1">
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <h4 className="font-medium text-gray-900 mb-2">Requirements:</h4>
+              <ul className="text-sm text-gray-700 space-y-1">
                 <li>• PDF must contain fillable form fields</li>
                 <li>• Supported field types: text, checkbox, radio buttons, dropdowns</li>
                 <li>• File size must be under 10MB</li>

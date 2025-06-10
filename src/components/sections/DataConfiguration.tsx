@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, FileSpreadsheet, AlertCircle, CheckCircle, ArrowRight } from 'lucide-react'
+import { Upload, FileSpreadsheet, AlertCircle, CheckCircle, ArrowRight, Download } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Input } from '../ui/input'
 import { Section, CSVParseResult, User } from '../../types'
 import { useSections } from '../../hooks/useSections'
+import { downloadSampleCSV } from '../../utils/sampleCSVData'
 import Papa from 'papaparse'
 import { generateId } from '../../lib/utils'
 
@@ -177,6 +178,29 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
         
         {!csvData ? (
           <div className="space-y-4">
+            {/* Sample CSV Download */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <FileSpreadsheet className="h-5 w-5 text-blue-600 mt-0.5" />
+                <div className="flex-1">
+                  <h4 className="font-medium text-blue-900 mb-2">Need Sample Data?</h4>
+                  <p className="text-sm text-blue-800 mb-3">
+                    Download sample CSV data that matches the employee form template. 
+                    This includes realistic employee information with all field types.
+                  </p>
+                  <Button
+                    onClick={() => downloadSampleCSV('sample_employee_data.csv')}
+                    size="sm"
+                    variant="outline"
+                    className="flex items-center gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    Download Sample CSV Data
+                  </Button>
+                </div>
+              </div>
+            </div>
+            
             <div
               {...getRootProps()}
               className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
@@ -279,7 +303,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                       <TableCell className="font-medium">
                         {field.name}
                         {field.required && (
-                          <Badge variant="destructive\" className="ml-2 text-xs">
+                          <Badge variant="destructive" className="ml-2 text-xs">
                             Required
                           </Badge>
                         )}
