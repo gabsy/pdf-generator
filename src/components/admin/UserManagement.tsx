@@ -112,7 +112,7 @@ export function UserManagement() {
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-2">
                       {user.id === currentUserProfile?.id && (
-                        <Badge variant="outline" className="text-xs">You</Badge>
+                        <Badge variant="outline\" className="text-xs">You</Badge>
                       )}
                       {user.email}
                     </div>
