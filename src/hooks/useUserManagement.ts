@@ -46,10 +46,10 @@ export function useUserManagement() {
         .from('user_profiles')
         .select('*')
         .eq('id', user.id)
-        .single()
+        .maybeSingle()
 
       if (error) throw error
-      return dbRowToUserProfile(data)
+      return data ? dbRowToUserProfile(data) : null
     },
     enabled: !!user,
   })
