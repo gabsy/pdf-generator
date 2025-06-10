@@ -18,79 +18,124 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [uploadProgress, setUploadProgress] = useState<string>('')
+  const [debugInfo, setDebugInfo] = useState<string>('')
 
   const processTemplate = async (file: File) => {
+    console.log('Starting PDF processing...', { fileName: file.name, fileSize: file.size, fileType: file.type })
+    
     setIsProcessing(true)
     setError(null)
     setUploadProgress('Reading file...')
+    setDebugInfo(`File: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`)
 
     try {
       // Validate file type
       if (file.type !== 'application/pdf') {
-        throw new Error('Please upload a valid PDF file')
+        throw new Error(`Invalid file type: ${file.type}. Please upload a PDF file.`)
       }
 
       // Validate file size (max 10MB)
       if (file.size > 10 * 1024 * 1024) {
-        throw new Error('File size must be less than 10MB')
+        throw new Error(`File too large: ${(file.size / 1024 / 1024).toFixed(2)} MB. Maximum size is 10MB.`)
       }
 
-      setUploadProgress('Processing PDF...')
+      if (file.size === 0) {
+        throw new Error('File appears to be empty. Please try uploading again.')
+      }
+
+      setUploadProgress('Converting file to buffer...')
       
       const arrayBuffer = await file.arrayBuffer()
+      console.log('ArrayBuffer created:', { byteLength: arrayBuffer.byteLength })
+      
+      if (arrayBuffer.byteLength === 0) {
+        throw new Error('Failed to read file content. Please try again.')
+      }
+
+      setUploadProgress('Loading PDF document...')
+      setDebugInfo(prev => prev + `\nBuffer size: ${arrayBuffer.byteLength} bytes`)
+      
+      let pdfDoc: PDFDocument
+      try {
+        pdfDoc = await PDFDocument.load(arrayBuffer)
+        console.log('PDF loaded successfully')
+      } catch (pdfError) {
+        console.error('PDF loading error:', pdfError)
+        throw new Error(`Invalid PDF file: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}`)
+      }
       
       setUploadProgress('Extracting form fields...')
       
-      const pdfDoc = await PDFDocument.load(arrayBuffer)
+      // Get page count
+      const pageCount = pdfDoc.getPageCount()
+      console.log('PDF page count:', pageCount)
+      setDebugInfo(prev => prev + `\nPages: ${pageCount}`)
       
       // Extract form fields
-      const form = pdfDoc.getForm()
-      const fields = form.getFields()
+      let form: any
+      let fields: any[] = []
       
-      if (fields.length === 0) {
-        console.warn('No form fields found in PDF')
+      try {
+        form = pdfDoc.getForm()
+        fields = form.getFields()
+        console.log('Form fields found:', fields.length)
+        setDebugInfo(prev => prev + `\nForm fields: ${fields.length}`)
+      } catch (formError) {
+        console.warn('No form found or error extracting form:', formError)
+        // Continue without form fields - this is not necessarily an error
       }
       
-      const extractedFields: PDFField[] = fields.map(field => {
-        const fieldName = field.getName()
-        const fieldType = field.constructor.name
-        
-        let type: PDFField['type'] = 'text'
-        let options: string[] | undefined = undefined
-        
-        if (fieldType.includes('Checkbox')) {
-          type = 'checkbox'
-        } else if (fieldType.includes('Radio')) {
-          type = 'radio'
-          // Try to get radio button options
-          try {
-            const radioField = field as any
-            if (radioField.getOptions) {
-              options = radioField.getOptions()
+      const extractedFields: PDFField[] = fields.map((field, index) => {
+        try {
+          const fieldName = field.getName()
+          const fieldType = field.constructor.name
+          
+          console.log(`Field ${index}:`, { name: fieldName, type: fieldType })
+          
+          let type: PDFField['type'] = 'text'
+          let options: string[] | undefined = undefined
+          
+          if (fieldType.includes('Checkbox')) {
+            type = 'checkbox'
+          } else if (fieldType.includes('Radio')) {
+            type = 'radio'
+            // Try to get radio button options
+            try {
+              const radioField = field as any
+              if (radioField.getOptions) {
+                options = radioField.getOptions()
+              }
+            } catch (e) {
+              console.warn('Could not extract radio options:', e)
             }
-          } catch (e) {
-            // Ignore if options can't be extracted
-          }
-        } else if (fieldType.includes('Dropdown')) {
-          type = 'dropdown'
-          // Extract options from dropdown if available
-          try {
-            const dropdown = field as any
-            if (dropdown.getOptions) {
-              options = dropdown.getOptions()
+          } else if (fieldType.includes('Dropdown')) {
+            type = 'dropdown'
+            // Extract options from dropdown if available
+            try {
+              const dropdown = field as any
+              if (dropdown.getOptions) {
+                options = dropdown.getOptions()
+              }
+            } catch (e) {
+              console.warn('Could not extract dropdown options:', e)
             }
-          } catch (e) {
-            // Ignore if options can't be extracted
+          } else if (fieldType.includes('Text')) {
+            type = 'text'
           }
-        } else if (fieldType.includes('Text')) {
-          type = 'text'
-        }
-        
-        return {
-          name: fieldName,
-          type,
-          required: false, // We'll assume all fields are optional by default
-          options
+          
+          return {
+            name: fieldName,
+            type,
+            required: false, // We'll assume all fields are optional by default
+            options
+          }
+        } catch (fieldError) {
+          console.error(`Error processing field ${index}:`, fieldError)
+          return {
+            name: `field_${index}`,
+            type: 'text' as const,
+            required: false
+          }
         }
       })
 
@@ -101,53 +146,77 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
         fileData: arrayBuffer,
         extractedFields,
         uploadedAt: new Date(),
-        pageCount: pdfDoc.getPageCount()
+        pageCount
       }
 
-      await updateSection({ 
-        id: section.id, 
-        updates: { 
-          template,
-          status: section.users.length > 0 ? 'ready' : 'template-configured'
-        }
+      console.log('Calling updateSection with template:', {
+        fileName: template.fileName,
+        pageCount: template.pageCount,
+        fieldsCount: template.extractedFields.length
       })
 
-      setUploadProgress('Complete!')
-      
-      // Clear progress after a short delay
-      setTimeout(() => {
-        setUploadProgress('')
-      }, 1000)
+      try {
+        await updateSection({ 
+          id: section.id, 
+          updates: { 
+            template,
+            status: section.users.length > 0 ? 'ready' : 'template-configured'
+          }
+        })
+        
+        console.log('Template updated successfully')
+        setUploadProgress('Complete!')
+        setDebugInfo(prev => prev + '\nUpload successful!')
+        
+        // Clear progress after a short delay
+        setTimeout(() => {
+          setUploadProgress('')
+          setDebugInfo('')
+        }, 2000)
+      } catch (updateError) {
+        console.error('Error updating section:', updateError)
+        throw new Error(`Failed to save template: ${updateError instanceof Error ? updateError.message : 'Unknown error'}`)
+      }
 
     } catch (err) {
       console.error('Error processing PDF:', err)
       const errorMessage = err instanceof Error ? err.message : 'Failed to process PDF'
-      setError(`${errorMessage}. Please ensure it's a valid PDF file.`)
+      setError(errorMessage)
+      setDebugInfo(prev => prev + `\nError: ${errorMessage}`)
     } finally {
       setIsProcessing(false)
     }
   }
 
   const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
+    console.log('Files dropped:', { accepted: acceptedFiles.length, rejected: rejectedFiles.length })
+    
     // Handle rejected files
     if (rejectedFiles.length > 0) {
       const rejection = rejectedFiles[0]
+      console.log('File rejected:', rejection)
+      
       if (rejection.errors.some((e: any) => e.code === 'file-invalid-type')) {
         setError('Please upload a PDF file only')
       } else if (rejection.errors.some((e: any) => e.code === 'file-too-large')) {
         setError('File size must be less than 10MB')
       } else {
-        setError('Invalid file. Please try again.')
+        setError(`File rejected: ${rejection.errors.map((e: any) => e.message).join(', ')}`)
       }
       return
     }
 
     const file = acceptedFiles[0]
     if (file) {
+      console.log('Processing file:', file)
       setError(null)
+      setDebugInfo('')
       processTemplate(file)
+    } else {
+      console.log('No file to process')
+      setError('No file selected')
     }
-  }, [])
+  }, [section.id, updateSection])
 
   const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
     onDrop,
@@ -156,7 +225,13 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
     },
     maxFiles: 1,
     maxSize: 10 * 1024 * 1024, // 10MB
-    multiple: false
+    multiple: false,
+    onDropRejected: (rejectedFiles) => {
+      console.log('Drop rejected:', rejectedFiles)
+    },
+    onDropAccepted: (acceptedFiles) => {
+      console.log('Drop accepted:', acceptedFiles)
+    }
   })
 
   const generateSampleCSV = () => {
@@ -248,7 +323,12 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
                   <Loader2 className="h-12 w-12 text-blue-600 animate-spin mb-4" />
                   <p className="text-lg font-medium text-gray-900 mb-2">Processing PDF...</p>
                   {uploadProgress && (
-                    <p className="text-sm text-gray-600">{uploadProgress}</p>
+                    <p className="text-sm text-gray-600 mb-2">{uploadProgress}</p>
+                  )}
+                  {debugInfo && (
+                    <div className="text-xs text-gray-500 bg-gray-100 p-2 rounded max-w-md">
+                      <pre className="whitespace-pre-wrap">{debugInfo}</pre>
+                    </div>
                   )}
                 </div>
               ) : (
@@ -279,19 +359,31 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
             </div>
             
             {error && (
-              <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg">
-                <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0" />
-                <p className="text-red-800">{error}</p>
+              <div className="flex items-start gap-2 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-red-800 font-medium">Upload Error</p>
+                  <p className="text-red-700 text-sm mt-1">{error}</p>
+                  {debugInfo && (
+                    <details className="mt-2">
+                      <summary className="text-xs text-red-600 cursor-pointer">Debug Information</summary>
+                      <pre className="text-xs text-red-600 mt-1 whitespace-pre-wrap bg-red-100 p-2 rounded">
+                        {debugInfo}
+                      </pre>
+                    </details>
+                  )}
+                </div>
               </div>
             )}
 
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
               <h4 className="font-medium text-gray-900 mb-2">Requirements:</h4>
               <ul className="text-sm text-gray-700 space-y-1">
-                <li>• PDF must contain fillable form fields</li>
+                <li>• PDF must be a valid, non-corrupted file</li>
+                <li>• Fillable form fields are recommended but not required</li>
                 <li>• Supported field types: text, checkbox, radio buttons, dropdowns</li>
                 <li>• File size must be under 10MB</li>
-                <li>• Form fields will be automatically detected</li>
+                <li>• Form fields will be automatically detected if present</li>
               </ul>
             </div>
           </div>
