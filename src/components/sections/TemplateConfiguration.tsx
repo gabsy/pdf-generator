@@ -4,7 +4,7 @@ import { Upload, FileText, Download, AlertCircle, CheckCircle, Loader2 } from 'l
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
-import { Section, PDFField } from '../types'
+import { Section, PDFField } from '../../types'
 import { useSections } from '../../hooks/useSections'
 import { SamplePDFGenerator } from './SamplePDFGenerator'
 import { PDFDocument } from 'pdf-lib'
@@ -162,6 +162,8 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
             id: section.id, 
             updates: { 
               template,
+              // Reset field mappings when replacing template to avoid conflicts
+              fieldMappings: [],
               status: section.users.length > 0 ? 'ready' : 'template-configured'
             }
           },
@@ -274,16 +276,36 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
   }
 
   const removeTemplate = () => {
-    if (confirm('Are you sure you want to remove this template? This will also clear any field mappings.')) {
+    if (confirm('Are you sure you want to remove this template? This will also clear any field mappings and reset users data.')) {
       updateSection({
         id: section.id,
         updates: {
           template: undefined,
           fieldMappings: [],
-          status: section.users.length > 0 ? 'users-loaded' : 'draft'
+          users: [], // Also clear users when removing template
+          status: 'draft'
         }
       })
     }
+  }
+
+  const replaceTemplate = () => {
+    // Clear any existing errors and trigger file selection
+    setError(null)
+    setUploadProgress('')
+    setDebugInfo('')
+    
+    // Create a hidden file input and trigger it
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.pdf'
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (file) {
+        processTemplate(file)
+      }
+    }
+    input.click()
   }
 
   const getFieldTypeColor = (type: string) => {
@@ -421,9 +443,19 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
                   size="sm"
                   onClick={generateSampleCSV}
                   className="flex items-center gap-2"
+                  disabled={isUpdating}
                 >
                   <Download className="h-4 w-4" />
                   Download CSV Template
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={replaceTemplate}
+                  className="text-blue-600 hover:text-blue-700"
+                  disabled={isUpdating}
+                >
+                  {isUpdating ? 'Updating...' : 'Replace Template'}
                 </Button>
                 <Button
                   variant="outline"
@@ -432,10 +464,18 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
                   className="text-red-600 hover:text-red-700"
                   disabled={isUpdating}
                 >
-                  Replace Template
+                  Remove Template
                 </Button>
               </div>
             </div>
+
+            {/* Show processing state when updating */}
+            {isUpdating && (
+              <div className="flex items-center justify-center p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <Loader2 className="h-5 w-5 text-blue-600 animate-spin mr-2" />
+                <p className="text-blue-800">Updating template...</p>
+              </div>
+            )}
           </div>
         )}
       </div>
