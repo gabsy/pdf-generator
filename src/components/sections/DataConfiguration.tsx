@@ -77,18 +77,21 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
     const existingMappings = section.fieldMappings || []
     const mappingIndex = existingMappings.findIndex(m => m.pdfFieldName === pdfField)
     
+    // Convert the special '--none--' value back to empty string for storage
+    const actualCsvColumn = csvColumn === '--none--' ? '' : csvColumn
+    
     let newMappings
     if (mappingIndex >= 0) {
       newMappings = existingMappings.map((mapping, index) =>
         index === mappingIndex 
-          ? { ...mapping, csvColumnName: csvColumn }
+          ? { ...mapping, csvColumnName: actualCsvColumn }
           : mapping
       )
     } else {
       const pdfFieldInfo = section.template?.extractedFields.find(f => f.name === pdfField)
       newMappings = [...existingMappings, {
         pdfFieldName: pdfField,
-        csvColumnName: csvColumn,
+        csvColumnName: actualCsvColumn,
         defaultValue: '',
         isRequired: pdfFieldInfo?.required || false
       }]
@@ -317,7 +320,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                       <TableCell className="font-medium">
                         {field.name}
                         {field.required && (
-                          <Badge variant="destructive\" className="ml-2 text-xs">
+                          <Badge variant="destructive" className="ml-2 text-xs">
                             Required
                           </Badge>
                         )}
@@ -327,7 +330,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                       </TableCell>
                       <TableCell>
                         <Select
-                          value={mapping?.csvColumnName || ''}
+                          value={mapping?.csvColumnName || '--none--'}
                           onValueChange={(value) => handleMappingChange(field.name, value)}
                           disabled={isUpdating}
                         >
@@ -335,7 +338,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                             <SelectValue placeholder="Select CSV column..." />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">No mapping</SelectItem>
+                            <SelectItem value="--none--">No mapping</SelectItem>
                             {csvData.headers.map((header) => (
                               <SelectItem key={header} value={header}>
                                 {header}
