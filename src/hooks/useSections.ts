@@ -122,6 +122,8 @@ export function useSections() {
             section_id: id,
             file_name: updates.template.fileName,
             file_data: fileData
+          }, {
+            onConflict: 'section_id'
           })
         
         if (fileError) {
@@ -193,15 +195,16 @@ export function useSections() {
         .from('template_files')
         .select('file_data')
         .eq('section_id', sectionId)
-        .single()
+        .order('created_at', { ascending: false })
+        .limit(1)
 
-      if (error || !data) {
+      if (error || !data || data.length === 0) {
         console.error('Error fetching template file:', error)
         return null
       }
 
       // Use browser-compatible conversion from base64 to ArrayBuffer
-      return base64ToArrayBuffer(data.file_data)
+      return base64ToArrayBuffer(data[0].file_data)
     } catch (error) {
       console.error('Error processing template file:', error)
       return null
