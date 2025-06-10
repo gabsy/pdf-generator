@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Search, Download, Users, FileText } from 'lucide-react'
+import { Search, Download, Users, FileText, AlertCircle } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Checkbox } from '../ui/checkbox'
@@ -47,14 +47,20 @@ export function UsersList({ section }: UsersListProps) {
   }
 
   const generatePDFs = async () => {
+    if (!section.template) {
+      alert('Please add a PDF template first to generate PDFs.')
+      return
+    }
+
     const selectedUserData = section.users.filter(user => selectedUsers.has(user.id))
     
-    if (!section.template || selectedUserData.length === 0) return
+    if (selectedUserData.length === 0) return
 
     // Get the actual template file data
     const templateFileData = await getTemplateFile(section.id)
     if (!templateFileData) {
       console.error('Could not load template file data')
+      alert('Failed to load template file. Please try uploading the template again.')
       return
     }
 
@@ -134,23 +140,39 @@ export function UsersList({ section }: UsersListProps) {
     }
   }
 
+  const exportCSV = () => {
+    if (section.users.length === 0) return
+
+    // Get all unique keys from all users (excluding id)
+    const allKeys = new Set<string>()
+    section.users.forEach(user => {
+      Object.keys(user).forEach(key => {
+        if (key !== 'id') allKeys.add(key)
+      })
+    })
+
+    const headers = Array.from(allKeys)
+    const csvContent = [
+      headers.join(','),
+      ...section.users.map(user => 
+        headers.map(header => `"${user[header] || ''}"`).join(',')
+      )
+    ].join('\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${section.name}_users.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   const getDataPreview = (user: User) => {
     const entries = Object.entries(user).filter(([key]) => key !== 'id')
     return entries.slice(0, 3).map(([key, value]) => `${key}: ${value}`).join(', ')
-  }
-
-  if (!section.template) {
-    return (
-      <div className="bg-white rounded-lg border shadow-sm p-6">
-        <div className="text-center py-8">
-          <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">Template Required</h3>
-          <p className="text-gray-600">
-            Please upload and configure a PDF template first.
-          </p>
-        </div>
-      </div>
-    )
   }
 
   if (section.users.length === 0) {
@@ -159,8 +181,11 @@ export function UsersList({ section }: UsersListProps) {
         <div className="text-center py-8">
           <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">No Users Data</h3>
-          <p className="text-gray-600">
-            Upload CSV data and configure field mappings to see users here.
+          <p className="text-gray-600 mb-4">
+            Upload CSV data in the Data Mapping tab to see users here.
+          </p>
+          <p className="text-sm text-gray-500">
+            You can import user data without a PDF template and add the template later.
           </p>
         </div>
       </div>
@@ -188,6 +213,22 @@ export function UsersList({ section }: UsersListProps) {
         </div>
       )}
 
+      {/* Template Status Alert */}
+      {!section.template && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
+            <div className="flex-1">
+              <h4 className="font-medium text-yellow-900 mb-2">PDF Generation Not Available</h4>
+              <p className="text-sm text-yellow-800">
+                To generate PDFs, please add a PDF template with form fields in the Template tab. 
+                You can still view, search, and export your user data as CSV.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Selection and Generation Panel */}
       <div className="bg-white rounded-lg border shadow-sm p-6">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -207,6 +248,15 @@ export function UsersList({ section }: UsersListProps) {
           
           <div className="flex items-center gap-2">
             <Button
+              onClick={exportCSV}
+              variant="outline"
+              size="sm"
+              className="flex items-center gap-2"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
+            <Button
               onClick={() => setSelectedUsers(new Set())}
               variant="outline"
               size="sm"
@@ -214,14 +264,16 @@ export function UsersList({ section }: UsersListProps) {
             >
               Clear Selection
             </Button>
-            <Button
-              onClick={generatePDFs}
-              disabled={selectedUsers.size === 0 || generationProgress.status === 'processing'}
-              className="flex items-center gap-2"
-            >
-              <Download className="h-4 w-4" />
-              Generate PDFs ({selectedUsers.size})
-            </Button>
+            {section.template && (
+              <Button
+                onClick={generatePDFs}
+                disabled={selectedUsers.size === 0 || generationProgress.status === 'processing'}
+                className="flex items-center gap-2"
+              >
+                <Download className="h-4 w-4" />
+                Generate PDFs ({selectedUsers.size})
+              </Button>
+            )}
           </div>
         </div>
       </div>

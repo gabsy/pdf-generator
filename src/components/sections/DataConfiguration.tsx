@@ -195,135 +195,9 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
 
   const mappingStatus = getMappingStatus()
 
-  if (!section.template) {
-    return (
-      <div className="bg-white rounded-lg border shadow-sm p-6">
-        <div className="text-center py-8">
-          <FileSpreadsheet className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">Template Required</h3>
-          <p className="text-gray-600">
-            Please upload and configure a PDF template first before setting up data mapping.
-          </p>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
-      {/* Field Mapping Section - Always show if template exists */}
-      <div className="bg-white rounded-lg border shadow-sm p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Field Mapping</h3>
-          <div className="flex items-center gap-4">
-            {mappingStatus && (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-gray-600">
-                  {mappingStatus.mapped}/{mappingStatus.total} fields mapped
-                </span>
-                {mappingStatus.requiredMapped < mappingStatus.required && (
-                  <Badge variant="destructive">
-                    {mappingStatus.required - mappingStatus.requiredMapped} required unmapped
-                  </Badge>
-                )}
-              </div>
-            )}
-            {hasImportedUsers && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={clearUsers}
-                disabled={isUpdating}
-                className="text-red-600 hover:text-red-700"
-              >
-                Clear Users & Reset
-              </Button>
-            )}
-          </div>
-        </div>
-        
-        <p className="text-gray-600 mb-4">
-          Map your CSV columns to PDF form fields. You can also set default values for unmapped fields.
-          {hasImportedUsers && (
-            <span className="text-green-600 font-medium"> Users have been imported - you can modify mappings below.</span>
-          )}
-        </p>
-        
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>PDF Field</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>CSV Column</TableHead>
-                <TableHead>Default Value</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {section.template.extractedFields.map((field) => {
-                const mapping = section.fieldMappings.find(m => m.pdfFieldName === field.name)
-                const isMapped = mapping && (mapping.csvColumnName || mapping.defaultValue)
-                
-                return (
-                  <TableRow key={field.name}>
-                    <TableCell className="font-medium">
-                      {field.name}
-                      {field.required && (
-                        <Badge variant="destructive\" className="ml-2 text-xs">
-                          Required
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{field.type}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={mapping?.csvColumnName || '--none--'}
-                        onValueChange={(value) => handleMappingChange(field.name, value)}
-                        disabled={isUpdating}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select CSV column..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="--none--">No mapping</SelectItem>
-                          {hasImportedUsers && section.users.length > 0 && (
-                            <>
-                              {Object.keys(section.users[0]).filter(key => key !== 'id').map((header) => (
-                                <SelectItem key={header} value={header}>
-                                  {header}
-                                </SelectItem>
-                              ))}
-                            </>
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell>
-                      <Input
-                        placeholder="Default value..."
-                        value={mapping?.defaultValue || ''}
-                        onChange={(e) => handleDefaultValueChange(field.name, e.target.value)}
-                        className="w-full"
-                        disabled={isUpdating}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={isMapped ? 'default' : 'outline'}>
-                        {isMapped ? 'Mapped' : 'Not mapped'}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      </div>
-
-      {/* CSV Upload Section - Only show if no users imported yet */}
+      {/* CSV Upload Section - Always show first */}
       {!hasImportedUsers && (
         <div className="bg-white rounded-lg border shadow-sm p-6">
           <h2 className="text-xl font-semibold mb-4">CSV Data Import</h2>
@@ -337,8 +211,8 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                   <div className="flex-1">
                     <h4 className="font-medium text-blue-900 mb-2">Need Sample Data?</h4>
                     <p className="text-sm text-blue-800 mb-3">
-                      Download sample CSV data that matches the employee form template. 
-                      This includes realistic employee information with all field types.
+                      Download sample CSV data that includes realistic employee information with all field types.
+                      You can use this data to test the application or as a template for your own data.
                     </p>
                     <Button
                       onClick={() => downloadSampleCSV('sample_employee_data.csv')}
@@ -367,7 +241,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                   {isDragActive ? 'Drop your CSV here' : 'Upload CSV Data'}
                 </p>
                 <p className="text-gray-600 mb-4">
-                  Upload a CSV file with user data to map to your PDF template fields
+                  Upload a CSV file with user data. You can add a PDF template later for automated form filling.
                 </p>
                 <Button variant="outline" disabled={isProcessing || isUpdating}>
                   {isProcessing ? 'Processing...' : 'Choose File'}
@@ -380,6 +254,17 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                   <p className="text-red-800">{error}</p>
                 </div>
               )}
+
+              {/* Info about workflow */}
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <h4 className="font-medium text-gray-900 mb-2">How it works:</h4>
+                <ul className="text-sm text-gray-700 space-y-1">
+                  <li>• Upload your CSV file with user data</li>
+                  <li>• Optionally add a PDF template with form fields</li>
+                  <li>• Map CSV columns to PDF fields (if template is added)</li>
+                  <li>• Generate personalized PDFs for each user</li>
+                </ul>
+              </div>
             </div>
           ) : (
             <div className="space-y-6">
@@ -431,7 +316,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
             <div>
               <h3 className="text-lg font-semibold">Imported Users</h3>
               <p className="text-gray-600">
-                {section.users.length} users imported and ready for PDF generation
+                {section.users.length} users imported and ready for processing
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -439,6 +324,128 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                 <CheckCircle className="h-3 w-3" />
                 {section.users.length} Users Ready
               </Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={clearUsers}
+                disabled={isUpdating}
+                className="text-red-600 hover:text-red-700"
+              >
+                Clear Users & Reset
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Field Mapping Section - Only show if template exists and users are imported */}
+      {section.template && hasImportedUsers && (
+        <div className="bg-white rounded-lg border shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">Field Mapping</h3>
+            {mappingStatus && (
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-gray-600">
+                  {mappingStatus.mapped}/{mappingStatus.total} fields mapped
+                </span>
+                {mappingStatus.requiredMapped < mappingStatus.required && (
+                  <Badge variant="destructive">
+                    {mappingStatus.required - mappingStatus.requiredMapped} required unmapped
+                  </Badge>
+                )}
+              </div>
+            )}
+          </div>
+          
+          <p className="text-gray-600 mb-4">
+            Map your CSV columns to PDF form fields. You can also set default values for unmapped fields.
+          </p>
+          
+          <div className="rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>PDF Field</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>CSV Column</TableHead>
+                  <TableHead>Default Value</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {section.template.extractedFields.map((field) => {
+                  const mapping = section.fieldMappings.find(m => m.pdfFieldName === field.name)
+                  const isMapped = mapping && (mapping.csvColumnName || mapping.defaultValue)
+                  
+                  return (
+                    <TableRow key={field.name}>
+                      <TableCell className="font-medium">
+                        {field.name}
+                        {field.required && (
+                          <Badge variant="destructive\" className="ml-2 text-xs">
+                            Required
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{field.type}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={mapping?.csvColumnName || '--none--'}
+                          onValueChange={(value) => handleMappingChange(field.name, value)}
+                          disabled={isUpdating}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Select CSV column..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="--none--">No mapping</SelectItem>
+                            {Object.keys(section.users[0]).filter(key => key !== 'id').map((header) => (
+                              <SelectItem key={header} value={header}>
+                                {header}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          placeholder="Default value..."
+                          value={mapping?.defaultValue || ''}
+                          onChange={(e) => handleDefaultValueChange(field.name, e.target.value)}
+                          className="w-full"
+                          disabled={isUpdating}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={isMapped ? 'default' : 'outline'}>
+                          {isMapped ? 'Mapped' : 'Not mapped'}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
+      {/* Template Recommendation - Show if users imported but no template */}
+      {hasImportedUsers && !section.template && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
+            <div className="flex-1">
+              <h4 className="font-medium text-yellow-900 mb-2">Add a PDF Template for Automated Generation</h4>
+              <p className="text-sm text-yellow-800 mb-3">
+                You have imported user data successfully! To generate personalized PDFs, consider adding a PDF template 
+                with form fields in the Template tab. This will allow you to automatically fill forms with your user data.
+              </p>
+              <p className="text-xs text-yellow-700">
+                Without a template, you can still view and manage your user data, but PDF generation won't be available.
+              </p>
             </div>
           </div>
         </div>
