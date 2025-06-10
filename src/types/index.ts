@@ -49,3 +49,12 @@ export interface CSVParseResult {
   headers: string[]
   errors: any[]
 }
+
+export interface UserProfile {
+  id: string
+  email: string
+  role: 'admin' | 'user'
+  createdAt: Date
+  updatedAt: Date
+  createdBy?: string
+}
