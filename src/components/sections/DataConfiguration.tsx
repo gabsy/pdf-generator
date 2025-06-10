@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useState, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { Upload, FileSpreadsheet, AlertCircle, CheckCircle, ArrowRight, Download } from 'lucide-react'
 import { Button } from '../ui/button'
@@ -21,6 +21,12 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
   const [csvData, setCsvData] = useState<CSVParseResult | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [hasImportedUsers, setHasImportedUsers] = useState(false)
+
+  // Check if users have been imported and we should show the mapping interface
+  useEffect(() => {
+    setHasImportedUsers(section.users.length > 0)
+  }, [section.users.length])
 
   const processCSV = async (file: File) => {
     setIsProcessing(true)
@@ -145,6 +151,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
         {
           onSuccess: () => {
             setCsvData(null)
+            setHasImportedUsers(true)
             resolve()
           },
           onError: (error: any) => {
@@ -154,6 +161,20 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
         }
       )
     })
+  }
+
+  const clearUsers = () => {
+    if (confirm('Are you sure you want to clear all imported users? This will also reset the field mappings.')) {
+      updateSection({
+        id: section.id,
+        updates: {
+          users: [],
+          fieldMappings: [],
+          status: section.template ? 'template-configured' : 'draft'
+        }
+      })
+      setHasImportedUsers(false)
+    }
   }
 
   const getMappingStatus = () => {
@@ -190,97 +211,11 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
 
   return (
     <div className="space-y-6">
+      {/* Field Mapping Section - Always show if template exists */}
       <div className="bg-white rounded-lg border shadow-sm p-6">
-        <h2 className="text-xl font-semibold mb-4">CSV Data Configuration</h2>
-        
-        {!csvData ? (
-          <div className="space-y-4">
-            {/* Sample CSV Download */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <FileSpreadsheet className="h-5 w-5 text-blue-600 mt-0.5" />
-                <div className="flex-1">
-                  <h4 className="font-medium text-blue-900 mb-2">Need Sample Data?</h4>
-                  <p className="text-sm text-blue-800 mb-3">
-                    Download sample CSV data that matches the employee form template. 
-                    This includes realistic employee information with all field types.
-                  </p>
-                  <Button
-                    onClick={() => downloadSampleCSV('sample_employee_data.csv')}
-                    size="sm"
-                    variant="outline"
-                    className="flex items-center gap-2"
-                  >
-                    <Download className="h-4 w-4" />
-                    Download Sample CSV Data
-                  </Button>
-                </div>
-              </div>
-            </div>
-            
-            <div
-              {...getRootProps()}
-              className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-                isDragActive 
-                  ? 'border-blue-400 bg-blue-50' 
-                  : 'border-gray-300 hover:border-gray-400'
-              } ${(isProcessing || isUpdating) ? 'cursor-not-allowed opacity-50' : ''}`}
-            >
-              <input {...getInputProps()} />
-              <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-lg font-medium text-gray-900 mb-2">
-                {isDragActive ? 'Drop your CSV here' : 'Upload CSV Data'}
-              </p>
-              <p className="text-gray-600 mb-4">
-                Upload a CSV file with user data to map to your PDF template fields
-              </p>
-              <Button variant="outline" disabled={isProcessing || isUpdating}>
-                {isProcessing ? 'Processing...' : 'Choose File'}
-              </Button>
-            </div>
-            
-            {error && (
-              <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg">
-                <AlertCircle className="h-5 w-5 text-red-600" />
-                <p className="text-red-800">{error}</p>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="flex items-center gap-3">
-                <CheckCircle className="h-5 w-5 text-blue-600" />
-                <div>
-                  <p className="font-medium text-blue-900">CSV Data Loaded</p>
-                  <p className="text-sm text-blue-700">
-                    {csvData.data.length} rows • {csvData.headers.length} columns
-                  </p>
-                </div>
-              </div>
-              <Button onClick={() => setCsvData(null)} variant="outline" size="sm">
-                Upload Different File
-              </Button>
-            </div>
-
-            <div className="grid gap-4">
-              <h3 className="text-lg font-semibold">Column Preview</h3>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                {csvData.headers.map((header, index) => (
-                  <Badge key={index} variant="outline" className="justify-center">
-                    {header}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {csvData && (
-        <div className="bg-white rounded-lg border shadow-sm p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold">Field Mapping</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">Field Mapping</h3>
+          <div className="flex items-center gap-4">
             {mappingStatus && (
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-gray-600">
@@ -293,93 +228,218 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                 )}
               </div>
             )}
+            {hasImportedUsers && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={clearUsers}
+                disabled={isUpdating}
+                className="text-red-600 hover:text-red-700"
+              >
+                Clear Users & Reset
+              </Button>
+            )}
           </div>
-          
-          <p className="text-gray-600 mb-4">
-            Map your CSV columns to PDF form fields. You can also set default values for unmapped fields.
-          </p>
-          
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>PDF Field</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>CSV Column</TableHead>
-                  <TableHead>Default Value</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {section.template.extractedFields.map((field) => {
-                  const mapping = section.fieldMappings.find(m => m.pdfFieldName === field.name)
-                  const isMapped = mapping && (mapping.csvColumnName || mapping.defaultValue)
-                  
-                  return (
-                    <TableRow key={field.name}>
-                      <TableCell className="font-medium">
-                        {field.name}
-                        {field.required && (
-                          <Badge variant="destructive\" className="ml-2 text-xs">
-                            Required
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{field.type}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Select
-                          value={mapping?.csvColumnName || '--none--'}
-                          onValueChange={(value) => handleMappingChange(field.name, value)}
-                          disabled={isUpdating}
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Select CSV column..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="--none--">No mapping</SelectItem>
-                            {csvData.headers.map((header) => (
-                              <SelectItem key={header} value={header}>
-                                {header}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          placeholder="Default value..."
-                          value={mapping?.defaultValue || ''}
-                          onChange={(e) => handleDefaultValueChange(field.name, e.target.value)}
-                          className="w-full"
-                          disabled={isUpdating}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={isMapped ? 'default' : 'outline'}>
-                          {isMapped ? 'Mapped' : 'Not mapped'}
+        </div>
+        
+        <p className="text-gray-600 mb-4">
+          Map your CSV columns to PDF form fields. You can also set default values for unmapped fields.
+          {hasImportedUsers && (
+            <span className="text-green-600 font-medium"> Users have been imported - you can modify mappings below.</span>
+          )}
+        </p>
+        
+        <div className="rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>PDF Field</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>CSV Column</TableHead>
+                <TableHead>Default Value</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {section.template.extractedFields.map((field) => {
+                const mapping = section.fieldMappings.find(m => m.pdfFieldName === field.name)
+                const isMapped = mapping && (mapping.csvColumnName || mapping.defaultValue)
+                
+                return (
+                  <TableRow key={field.name}>
+                    <TableCell className="font-medium">
+                      {field.name}
+                      {field.required && (
+                        <Badge variant="destructive" className="ml-2 text-xs">
+                          Required
                         </Badge>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{field.type}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={mapping?.csvColumnName || '--none--'}
+                        onValueChange={(value) => handleMappingChange(field.name, value)}
+                        disabled={isUpdating}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select CSV column..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="--none--">No mapping</SelectItem>
+                          {hasImportedUsers && section.users.length > 0 && (
+                            <>
+                              {Object.keys(section.users[0]).filter(key => key !== 'id').map((header) => (
+                                <SelectItem key={header} value={header}>
+                                  {header}
+                                </SelectItem>
+                              ))}
+                            </>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        placeholder="Default value..."
+                        value={mapping?.defaultValue || ''}
+                        onChange={(e) => handleDefaultValueChange(field.name, e.target.value)}
+                        className="w-full"
+                        disabled={isUpdating}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={isMapped ? 'default' : 'outline'}>
+                        {isMapped ? 'Mapped' : 'Not mapped'}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
 
-          <div className="flex justify-end mt-6">
-            <Button 
-              onClick={importUsers}
-              disabled={
-                (mappingStatus && mappingStatus.requiredMapped < mappingStatus.required) || 
-                isUpdating
-              }
-              className="flex items-center gap-2"
-            >
-              {isUpdating ? 'Importing...' : 'Import Users'}
-              <ArrowRight className="h-4 w-4" />
-            </Button>
+      {/* CSV Upload Section - Only show if no users imported yet */}
+      {!hasImportedUsers && (
+        <div className="bg-white rounded-lg border shadow-sm p-6">
+          <h2 className="text-xl font-semibold mb-4">CSV Data Import</h2>
+          
+          {!csvData ? (
+            <div className="space-y-4">
+              {/* Sample CSV Download */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <FileSpreadsheet className="h-5 w-5 text-blue-600 mt-0.5" />
+                  <div className="flex-1">
+                    <h4 className="font-medium text-blue-900 mb-2">Need Sample Data?</h4>
+                    <p className="text-sm text-blue-800 mb-3">
+                      Download sample CSV data that matches the employee form template. 
+                      This includes realistic employee information with all field types.
+                    </p>
+                    <Button
+                      onClick={() => downloadSampleCSV('sample_employee_data.csv')}
+                      size="sm"
+                      variant="outline"
+                      className="flex items-center gap-2"
+                    >
+                      <Download className="h-4 w-4" />
+                      Download Sample CSV Data
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              
+              <div
+                {...getRootProps()}
+                className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+                  isDragActive 
+                    ? 'border-blue-400 bg-blue-50' 
+                    : 'border-gray-300 hover:border-gray-400'
+                } ${(isProcessing || isUpdating) ? 'cursor-not-allowed opacity-50' : ''}`}
+              >
+                <input {...getInputProps()} />
+                <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-lg font-medium text-gray-900 mb-2">
+                  {isDragActive ? 'Drop your CSV here' : 'Upload CSV Data'}
+                </p>
+                <p className="text-gray-600 mb-4">
+                  Upload a CSV file with user data to map to your PDF template fields
+                </p>
+                <Button variant="outline" disabled={isProcessing || isUpdating}>
+                  {isProcessing ? 'Processing...' : 'Choose File'}
+                </Button>
+              </div>
+              
+              {error && (
+                <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <AlertCircle className="h-5 w-5 text-red-600" />
+                  <p className="text-red-800">{error}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <CheckCircle className="h-5 w-5 text-blue-600" />
+                  <div>
+                    <p className="font-medium text-blue-900">CSV Data Loaded</p>
+                    <p className="text-sm text-blue-700">
+                      {csvData.data.length} rows • {csvData.headers.length} columns
+                    </p>
+                  </div>
+                </div>
+                <Button onClick={() => setCsvData(null)} variant="outline" size="sm">
+                  Upload Different File
+                </Button>
+              </div>
+
+              <div className="grid gap-4">
+                <h3 className="text-lg font-semibold">Column Preview</h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                  {csvData.headers.map((header, index) => (
+                    <Badge key={index} variant="outline" className="justify-center">
+                      {header}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button 
+                  onClick={importUsers}
+                  disabled={isUpdating}
+                  className="flex items-center gap-2"
+                >
+                  {isUpdating ? 'Importing...' : 'Import Users'}
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Users Summary - Show if users are imported */}
+      {hasImportedUsers && (
+        <div className="bg-white rounded-lg border shadow-sm p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold">Imported Users</h3>
+              <p className="text-gray-600">
+                {section.users.length} users imported and ready for PDF generation
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant="default" className="flex items-center gap-1">
+                <CheckCircle className="h-3 w-3" />
+                {section.users.length} Users Ready
+              </Badge>
+            </div>
           </div>
         </div>
       )}
