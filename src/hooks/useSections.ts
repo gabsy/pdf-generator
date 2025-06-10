@@ -106,32 +106,57 @@ export function useSections() {
       if (updates.users !== undefined) updateData.users_data = JSON.stringify(updates.users)
       if (updates.fieldMappings !== undefined) updateData.field_mappings = JSON.stringify(updates.fieldMappings)
       
-      if (updates.template) {
-        updateData.template_file_name = updates.template.fileName
-        updateData.template_page_count = updates.template.pageCount
-        updateData.template_extracted_fields = JSON.stringify(updates.template.extractedFields)
-        updateData.template_uploaded_at = updates.template.uploadedAt.toISOString()
-        
-        console.log('Storing template file data...')
-        
-        // Store template file data separately using browser-compatible conversion
-        const fileData = arrayBufferToBase64(updates.template.fileData)
-        const { error: fileError } = await supabase
-          .from('template_files')
-          .upsert({
-            section_id: id,
-            file_name: updates.template.fileName,
-            file_data: fileData
-          }, {
-            onConflict: 'section_id'
-          })
-        
-        if (fileError) {
-          console.error('Error storing template file:', fileError)
-          throw fileError
+      // Handle template updates or removal
+      if (updates.template !== undefined) {
+        if (updates.template === null) {
+          // Explicitly remove template by setting all template fields to null
+          updateData.template_file_name = null
+          updateData.template_page_count = null
+          updateData.template_extracted_fields = null
+          updateData.template_uploaded_at = null
+          
+          console.log('Removing template, setting fields to null')
+          
+          // Also delete the template file from template_files table
+          const { error: deleteError } = await supabase
+            .from('template_files')
+            .delete()
+            .eq('section_id', id)
+          
+          if (deleteError) {
+            console.error('Error deleting template files:', deleteError)
+            // Don't throw here as the main update should still proceed
+          } else {
+            console.log('Template files deleted successfully')
+          }
+        } else {
+          // Adding/updating template
+          updateData.template_file_name = updates.template.fileName
+          updateData.template_page_count = updates.template.pageCount
+          updateData.template_extracted_fields = JSON.stringify(updates.template.extractedFields)
+          updateData.template_uploaded_at = updates.template.uploadedAt.toISOString()
+          
+          console.log('Storing template file data...')
+          
+          // Store template file data separately using browser-compatible conversion
+          const fileData = arrayBufferToBase64(updates.template.fileData)
+          const { error: fileError } = await supabase
+            .from('template_files')
+            .upsert({
+              section_id: id,
+              file_name: updates.template.fileName,
+              file_data: fileData
+            }, {
+              onConflict: 'section_id'
+            })
+          
+          if (fileError) {
+            console.error('Error storing template file:', fileError)
+            throw fileError
+          }
+          
+          console.log('Template file stored successfully')
         }
-        
-        console.log('Template file stored successfully')
       }
 
       console.log('Updating section with data:', updateData)

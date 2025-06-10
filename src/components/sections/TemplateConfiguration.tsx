@@ -277,13 +277,15 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
 
   const removeTemplate = () => {
     if (confirm('Are you sure you want to remove this template? This will also clear any field mappings and reset users data.')) {
+      console.log('Removing template for section:', section.id)
+      
       // Use a promise to handle the mutation and ensure UI updates
       const promise = new Promise<void>((resolve, reject) => {
         updateSection(
           {
             id: section.id,
             updates: {
-              template: undefined,
+              template: null, // Explicitly set to null to trigger removal
               fieldMappings: [],
               users: [], // Also clear users when removing template
               status: 'draft'
