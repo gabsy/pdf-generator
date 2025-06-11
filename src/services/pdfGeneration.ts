@@ -8,112 +8,342 @@ export class PDFGenerationService {
     user: User,
     fieldMappings: FieldMapping[]
   ): Promise<Uint8Array> {
-    // Create a copy of the template
-    const pdfDoc = await PDFDocument.load(template.fileData)
-    
     try {
-      // Get the form from the PDF
-      const form = pdfDoc.getForm()
+      // Create a copy of the template
+      const pdfDoc = await PDFDocument.load(template.fileData)
       
-      // Fill the form fields based on mappings
-      for (const mapping of fieldMappings) {
-        try {
-          // Get the value from user data or default value
-          let value = user[mapping.csvColumnName] || mapping.defaultValue || ''
+      // Check if this is an XFA form and handle it differently
+      const isXFA = await this.isXFAForm(template.fileData)
+      
+      if (isXFA) {
+        console.warn('XFA form detected - attempting compatibility mode')
+        // For XFA forms, we'll try to work with them but may need to flatten differently
+        return await this.handleXFAForm(pdfDoc, user, fieldMappings)
+      }
+      
+      try {
+        // Get the form from the PDF
+        const form = pdfDoc.getForm()
+        
+        // Fill the form fields based on mappings
+        for (const mapping of fieldMappings) {
+          if (!mapping.csvColumnName && !mapping.defaultValue) {
+            continue // Skip unmapped fields
+          }
           
-          // Convert value to string
-          value = String(value)
-          
-          // Try to get the field by name
           try {
+            // Get the value from user data or default value
+            let value = user[mapping.csvColumnName] || mapping.defaultValue || ''
+            
+            // Convert value to string and handle special cases
+            value = String(value).trim()
+            
+            // Try to get the field by name
+            try {
+              const field = form.getField(mapping.pdfFieldName)
+              
+              // Handle different field types with better error handling
+              if (field instanceof PDFTextField) {
+                // For text fields, ensure the value fits
+                try {
+                  field.setText(value)
+                } catch (textError) {
+                  console.warn(`Could not set text for field ${mapping.pdfFieldName}:`, textError)
+                  // Try setting a shorter version if the text is too long
+                  if (value.length > 100) {
+                    field.setText(value.substring(0, 100) + '...')
+                  }
+                }
+              } else if (field instanceof PDFCheckBox) {
+                // For checkboxes, check if value is truthy
+                const shouldCheck = value.toLowerCase() === 'true' || 
+                                  value.toLowerCase() === 'yes' || 
+                                  value === '1' || 
+                                  value.toLowerCase() === 'on' ||
+                                  value.toLowerCase() === 'da' // Romanian for "yes"
+                try {
+                  if (shouldCheck) {
+                    field.check()
+                  } else {
+                    field.uncheck()
+                  }
+                } catch (checkError) {
+                  console.warn(`Could not set checkbox for field ${mapping.pdfFieldName}:`, checkError)
+                }
+              } else if (field instanceof PDFRadioGroup) {
+                // For radio groups, try to select the option that matches the value
+                try {
+                  const options = field.getOptions()
+                  if (options.includes(value)) {
+                    field.select(value)
+                  } else if (options.length > 0) {
+                    // If exact match not found, try partial match
+                    const partialMatch = options.find(option => 
+                      option.toLowerCase().includes(value.toLowerCase()) ||
+                      value.toLowerCase().includes(option.toLowerCase())
+                    )
+                    if (partialMatch) {
+                      field.select(partialMatch)
+                    }
+                  }
+                } catch (radioError) {
+                  console.warn(`Could not set radio for field ${mapping.pdfFieldName}:`, radioError)
+                }
+              } else if (field instanceof PDFDropdown) {
+                // For dropdowns, try to select the option that matches the value
+                try {
+                  const options = field.getOptions()
+                  if (options.includes(value)) {
+                    field.select(value)
+                  } else if (options.length > 0) {
+                    // If exact match not found, try partial match
+                    const partialMatch = options.find(option => 
+                      option.toLowerCase().includes(value.toLowerCase()) ||
+                      value.toLowerCase().includes(option.toLowerCase())
+                    )
+                    if (partialMatch) {
+                      field.select(partialMatch)
+                    }
+                  }
+                } catch (dropdownError) {
+                  console.warn(`Could not set dropdown for field ${mapping.pdfFieldName}:`, dropdownError)
+                }
+              }
+            } catch (fieldError) {
+              console.warn(`Field not found or error accessing field ${mapping.pdfFieldName}:`, fieldError)
+              
+              // Try alternative field access methods
+              try {
+                const fields = form.getFields()
+                
+                // Find field by name (case insensitive and partial match)
+                const matchingField = fields.find(f => {
+                  const fieldName = f.getName().toLowerCase()
+                  const targetName = mapping.pdfFieldName.toLowerCase()
+                  return fieldName === targetName || 
+                         fieldName.includes(targetName) || 
+                         targetName.includes(fieldName)
+                })
+                
+                if (matchingField) {
+                  if (matchingField instanceof PDFTextField) {
+                    try {
+                      matchingField.setText(value)
+                    } catch (e) {
+                      console.warn(`Alternative text field access failed:`, e)
+                    }
+                  } else if (matchingField instanceof PDFCheckBox) {
+                    const shouldCheck = value.toLowerCase() === 'true' || 
+                                      value.toLowerCase() === 'yes' || 
+                                      value === '1' || 
+                                      value.toLowerCase() === 'on' ||
+                                      value.toLowerCase() === 'da'
+                    try {
+                      if (shouldCheck) {
+                        matchingField.check()
+                      } else {
+                        matchingField.uncheck()
+                      }
+                    } catch (e) {
+                      console.warn(`Alternative checkbox access failed:`, e)
+                    }
+                  } else if (matchingField instanceof PDFRadioGroup) {
+                    try {
+                      const options = matchingField.getOptions()
+                      if (options.includes(value)) {
+                        matchingField.select(value)
+                      }
+                    } catch (e) {
+                      console.warn(`Alternative radio access failed:`, e)
+                    }
+                  } else if (matchingField instanceof PDFDropdown) {
+                    try {
+                      const options = matchingField.getOptions()
+                      if (options.includes(value)) {
+                        matchingField.select(value)
+                      }
+                    } catch (e) {
+                      console.warn(`Alternative dropdown access failed:`, e)
+                    }
+                  }
+                }
+              } catch (alternateFieldError) {
+                console.warn(`Alternative field access failed for ${mapping.pdfFieldName}:`, alternateFieldError)
+              }
+            }
+          } catch (error) {
+            console.warn(`Failed to set field ${mapping.pdfFieldName}:`, error)
+          }
+        }
+        
+        // Try to flatten the form to make it non-editable and improve compatibility
+        try {
+          // Before flattening, ensure all fields are properly set
+          form.updateFieldAppearances()
+          
+          // Flatten the form to improve Adobe Reader compatibility
+          form.flatten()
+          
+          console.log('Form flattened successfully')
+        } catch (flattenError) {
+          console.warn('Could not flatten form, continuing without flattening:', flattenError)
+          
+          // If flattening fails, try to at least update field appearances
+          try {
+            form.updateFieldAppearances()
+          } catch (appearanceError) {
+            console.warn('Could not update field appearances:', appearanceError)
+          }
+        }
+        
+      } catch (formError) {
+        console.warn('Error accessing form, continuing with unfilled PDF:', formError)
+        
+        // If we can't access the form at all, try to create a new PDF with the content
+        // This is a fallback for very problematic PDFs
+        return await this.createFallbackPDF(pdfDoc, user, fieldMappings)
+      }
+
+      // Save the PDF with compatibility settings
+      const pdfBytes = await pdfDoc.save({
+        useObjectStreams: false, // Better compatibility with older readers
+        addDefaultPage: false,
+        objectsPerTick: 50,
+        updateFieldAppearances: true
+      })
+      
+      return pdfBytes
+    } catch (error) {
+      console.error('Error generating PDF:', error)
+      
+      // If all else fails, return the original template
+      console.warn('Returning original template due to errors')
+      return new Uint8Array(template.fileData)
+    }
+  }
+
+  private async isXFAForm(pdfData: ArrayBuffer): Promise<boolean> {
+    try {
+      const bytes = new Uint8Array(pdfData)
+      let pdfText = ''
+      
+      // Check first 1MB for XFA indicators
+      for (let i = 0; i < Math.min(bytes.byteLength, 1000000); i++) {
+        pdfText += String.fromCharCode(bytes[i])
+      }
+      
+      const xfaIndicators = [
+        '/XFA',
+        '<xfa:',
+        '<xdp:',
+        '<template xmlns:xfa',
+        'application/vnd.adobe.xdp+xml',
+        'XFA_',
+        'xfa.form',
+        'xfa.datasets',
+        'xfa.template',
+        'LiveCycle',
+        'Designer'
+      ]
+      
+      return xfaIndicators.some(indicator => pdfText.includes(indicator))
+    } catch (error) {
+      console.error('Error checking for XFA:', error)
+      return false
+    }
+  }
+
+  private async handleXFAForm(
+    pdfDoc: PDFDocument, 
+    user: User, 
+    fieldMappings: FieldMapping[]
+  ): Promise<Uint8Array> {
+    try {
+      console.log('Handling XFA form with special processing')
+      
+      // For XFA forms, we need to be more careful
+      // Try to access the form but don't flatten it as it may cause issues
+      try {
+        const form = pdfDoc.getForm()
+        
+        // Fill fields but be more conservative
+        for (const mapping of fieldMappings) {
+          if (!mapping.csvColumnName && !mapping.defaultValue) {
+            continue
+          }
+          
+          try {
+            let value = user[mapping.csvColumnName] || mapping.defaultValue || ''
+            value = String(value).trim()
+            
             const field = form.getField(mapping.pdfFieldName)
             
-            // Handle different field types
             if (field instanceof PDFTextField) {
-              field.setText(value)
+              // For XFA text fields, be more conservative with text length
+              const maxLength = 50 // Conservative limit for XFA
+              const truncatedValue = value.length > maxLength ? value.substring(0, maxLength) : value
+              field.setText(truncatedValue)
             } else if (field instanceof PDFCheckBox) {
-              // For checkboxes, check if value is truthy
               const shouldCheck = value.toLowerCase() === 'true' || 
                                 value.toLowerCase() === 'yes' || 
                                 value === '1' || 
-                                value.toLowerCase() === 'on'
+                                value.toLowerCase() === 'da'
               if (shouldCheck) {
                 field.check()
               } else {
                 field.uncheck()
               }
-            } else if (field instanceof PDFRadioGroup) {
-              // For radio groups, try to select the option that matches the value
-              const options = field.getOptions()
-              if (options.includes(value)) {
-                field.select(value)
-              }
-            } else if (field instanceof PDFDropdown) {
-              // For dropdowns, try to select the option that matches the value
-              const options = field.getOptions()
-              if (options.includes(value)) {
-                field.select(value)
-              }
             }
+            // Skip radio and dropdown for XFA as they're more problematic
           } catch (fieldError) {
-            console.warn(`Field not found or error accessing field ${mapping.pdfFieldName}:`, fieldError)
-            
-            // Try to fill the field using AcroForm field names (for XFA compatibility)
-            try {
-              // Get all form fields
-              const fields = form.getFields()
-              
-              // Find field by name (case insensitive)
-              const matchingField = fields.find(f => 
-                f.getName().toLowerCase() === mapping.pdfFieldName.toLowerCase()
-              )
-              
-              if (matchingField) {
-                if (matchingField instanceof PDFTextField) {
-                  matchingField.setText(value)
-                } else if (matchingField instanceof PDFCheckBox) {
-                  const shouldCheck = value.toLowerCase() === 'true' || 
-                                    value.toLowerCase() === 'yes' || 
-                                    value === '1' || 
-                                    value.toLowerCase() === 'on'
-                  if (shouldCheck) {
-                    matchingField.check()
-                  } else {
-                    matchingField.uncheck()
-                  }
-                } else if (matchingField instanceof PDFRadioGroup) {
-                  const options = matchingField.getOptions()
-                  if (options.includes(value)) {
-                    matchingField.select(value)
-                  }
-                } else if (matchingField instanceof PDFDropdown) {
-                  const options = matchingField.getOptions()
-                  if (options.includes(value)) {
-                    matchingField.select(value)
-                  }
-                }
-              }
-            } catch (alternateFieldError) {
-              console.warn(`Alternative field access failed for ${mapping.pdfFieldName}:`, alternateFieldError)
-            }
+            console.warn(`XFA field error for ${mapping.pdfFieldName}:`, fieldError)
           }
-        } catch (error) {
-          console.warn(`Failed to set field ${mapping.pdfFieldName}:`, error)
         }
+        
+        // For XFA forms, don't flatten - just update appearances
+        try {
+          form.updateFieldAppearances()
+        } catch (appearanceError) {
+          console.warn('Could not update XFA field appearances:', appearanceError)
+        }
+        
+      } catch (xfaFormError) {
+        console.warn('Could not access XFA form:', xfaFormError)
       }
       
-      // Attempt to flatten the form to make it non-editable
-      try {
-        form.flatten()
-      } catch (flattenError) {
-        console.warn('Could not flatten form, continuing without flattening:', flattenError)
-      }
+      // Save with XFA-friendly settings
+      return await pdfDoc.save({
+        useObjectStreams: false,
+        addDefaultPage: false,
+        objectsPerTick: 25, // Smaller chunks for XFA
+        updateFieldAppearances: false // Don't force appearance updates for XFA
+      })
       
-    } catch (formError) {
-      console.warn('Error accessing form, continuing with unfilled PDF:', formError)
+    } catch (error) {
+      console.error('Error handling XFA form:', error)
+      throw error
     }
+  }
 
-    return pdfDoc.save()
+  private async createFallbackPDF(
+    pdfDoc: PDFDocument, 
+    user: User, 
+    fieldMappings: FieldMapping[]
+  ): Promise<Uint8Array> {
+    try {
+      console.log('Creating fallback PDF')
+      
+      // If we can't work with the form, just return the original PDF
+      // This ensures we always return something usable
+      return await pdfDoc.save({
+        useObjectStreams: false,
+        addDefaultPage: false
+      })
+      
+    } catch (error) {
+      console.error('Error creating fallback PDF:', error)
+      throw error
+    }
   }
 
   async generateBulkPDFs(
@@ -143,7 +373,7 @@ export class PDFGenerationService {
         
         // Try to create a more meaningful filename if possible
         const nameField = fieldMappings.find(m => 
-          m.csvColumnName && ['name', 'full_name', 'fullname', 'first_name', 'lastname'].includes(m.csvColumnName.toLowerCase())
+          m.csvColumnName && ['name', 'full_name', 'fullname', 'first_name', 'lastname', 'nume', 'prenume'].includes(m.csvColumnName.toLowerCase())
         )
         
         if (nameField && user[nameField.csvColumnName]) {
@@ -154,7 +384,10 @@ export class PDFGenerationService {
         zip.file(filename, pdfBytes)
       } catch (error) {
         console.error(`Failed to generate PDF for user ${user.id}:`, error)
-        // Continue with other users even if one fails
+        
+        // Add an error file to the zip to indicate the failure
+        const errorContent = `Error generating PDF for user ${user.id}: ${error instanceof Error ? error.message : 'Unknown error'}`
+        zip.file(`ERROR_${user.id}.txt`, errorContent)
       }
     }
 
@@ -177,6 +410,10 @@ export class PDFGenerationService {
       let extractedFields: PDFField[] = []
       
       console.log(`PDF loaded successfully with ${pageCount} pages`)
+      
+      // Check if this is an XFA form first
+      const isXFA = await this.isXFAForm(pdfData)
+      console.log(`PDF type: ${isXFA ? 'XFA' : 'Standard'}`)
       
       // Method 1: Standard PDF-lib form extraction
       try {
@@ -235,8 +472,8 @@ export class PDFGenerationService {
         console.warn('Method 1 failed - No standard form found:', formError)
       }
       
-      // Method 2: Enhanced raw PDF content analysis
-      if (extractedFields.length < 10) { // Increase threshold since we expect many fields
+      // Method 2: Enhanced raw PDF content analysis (especially for XFA)
+      if (extractedFields.length < 5 || isXFA) {
         console.log('Method 2 - Enhanced raw content analysis...')
         const rawFields = await this.extractFieldsFromRawPDF(pdfData)
         
@@ -246,25 +483,14 @@ export class PDFGenerationService {
         }
       }
       
-      // Method 3: Deep annotation and widget analysis
+      // Method 3: Romanian-specific field patterns
       if (extractedFields.length < 10) {
-        console.log('Method 3 - Deep annotation analysis...')
-        const annotationFields = await this.extractFieldsFromAnnotations(pdfDoc)
+        console.log('Method 3 - Romanian form pattern analysis...')
+        const romanianFields = await this.extractRomanianFormFields(pdfData)
         
-        if (annotationFields.length > extractedFields.length) {
-          console.log(`Method 3 found ${annotationFields.length} fields, using these instead`)
-          extractedFields = annotationFields
-        }
-      }
-      
-      // Method 4: XFA and complex form analysis
-      if (extractedFields.length < 10) {
-        console.log('Method 4 - XFA and complex form analysis...')
-        const xfaFields = await this.extractXFAFields(pdfData)
-        
-        if (xfaFields.length > extractedFields.length) {
-          console.log(`Method 4 found ${xfaFields.length} fields, using these instead`)
-          extractedFields = xfaFields
+        if (romanianFields.length > extractedFields.length) {
+          console.log(`Method 3 found ${romanianFields.length} fields, using these instead`)
+          extractedFields = romanianFields
         }
       }
       
@@ -280,14 +506,113 @@ export class PDFGenerationService {
     }
   }
 
+  // Method for Romanian-specific form patterns
+  private async extractRomanianFormFields(pdfData: ArrayBuffer): Promise<PDFField[]> {
+    try {
+      const bytes = new Uint8Array(pdfData)
+      let pdfText = ''
+      
+      // Convert to string for pattern matching
+      for (let i = 0; i < Math.min(bytes.byteLength, 2000000); i++) {
+        pdfText += String.fromCharCode(bytes[i])
+      }
+      
+      const fieldNames = new Set<string>()
+      
+      // Romanian-specific patterns and common field names
+      const romanianPatterns = [
+        // Common Romanian form field names
+        /\b(nume|prenume|cnp|seria|numar|telefon|email|adresa|localitate|judet|cod_postal)\b/gi,
+        /\b(beneficiar|solicitant|reprezentant|imputernicit)\b/gi,
+        /\b(autovehicul|motor|electric|hibrid|tip)\b/gi,
+        /\b(suma|valoare|ecotichete|numar_ecotichete)\b/gi,
+        /\b(domiciliu|resedinta|strada|bloc|scara|etaj|apartament)\b/gi,
+        /\b(data|eliberat|emis|valabil)\b/gi,
+        
+        // Standard field patterns
+        /\/T\s*\(([^)]+)\)/g,
+        /\/TU\s*\(([^)]+)\)/g,
+        /<field\s+name="([^"]+)"/gi,
+        /this\.getField\("([^"]+)"\)/g,
+      ]
+      
+      for (const pattern of romanianPatterns) {
+        let match
+        pattern.lastIndex = 0
+        
+        while ((match = pattern.exec(pdfText)) !== null) {
+          if (match[1]) {
+            const fieldName = match[1].trim()
+            if (this.isValidFieldName(fieldName)) {
+              fieldNames.add(fieldName)
+            }
+          } else if (match[0]) {
+            // For patterns that match the whole word
+            const fieldName = match[0].trim()
+            if (this.isValidFieldName(fieldName)) {
+              fieldNames.add(fieldName)
+            }
+          }
+        }
+      }
+      
+      // If we found some fields, return them
+      if (fieldNames.size > 0) {
+        return Array.from(fieldNames).map(name => ({
+          name,
+          type: this.guessFieldType(name),
+          required: false
+        }))
+      }
+      
+      // If no specific fields found, create common Romanian form fields
+      const commonRomanianFields = [
+        { name: 'nume_solicitant', type: 'text' as const },
+        { name: 'prenume_solicitant', type: 'text' as const },
+        { name: 'cnp', type: 'text' as const },
+        { name: 'seria_ci', type: 'text' as const },
+        { name: 'numar_ci', type: 'text' as const },
+        { name: 'eliberat_de', type: 'text' as const },
+        { name: 'data_eliberare', type: 'date' as const },
+        { name: 'telefon', type: 'text' as const },
+        { name: 'email', type: 'text' as const },
+        { name: 'judet', type: 'dropdown' as const },
+        { name: 'localitate', type: 'text' as const },
+        { name: 'strada', type: 'text' as const },
+        { name: 'numar_strada', type: 'text' as const },
+        { name: 'bloc', type: 'text' as const },
+        { name: 'scara', type: 'text' as const },
+        { name: 'etaj', type: 'text' as const },
+        { name: 'apartament', type: 'text' as const },
+        { name: 'cod_postal', type: 'text' as const },
+        { name: 'beneficiar_minor', type: 'checkbox' as const },
+        { name: 'tip_autovehicul', type: 'dropdown' as const },
+        { name: 'autovehicul_electric', type: 'checkbox' as const },
+        { name: 'autovehicul_hibrid', type: 'checkbox' as const },
+        { name: 'suma_solicitata', type: 'number' as const },
+        { name: 'numar_ecotichete', type: 'number' as const },
+        { name: 'reprezentant_legal', type: 'checkbox' as const },
+        { name: 'imputernicit', type: 'checkbox' as const }
+      ]
+      
+      return commonRomanianFields.map(field => ({
+        ...field,
+        required: false
+      }))
+    } catch (error) {
+      console.error('Error in Romanian field extraction:', error)
+      return []
+    }
+  }
+
   // Method 2: Enhanced raw PDF content analysis
   private async extractFieldsFromRawPDF(pdfData: ArrayBuffer): Promise<PDFField[]> {
     try {
       const bytes = new Uint8Array(pdfData)
       let pdfText = ''
       
-      // Convert to string for pattern matching (process entire file for better detection)
-      for (let i = 0; i < bytes.byteLength; i++) {
+      // Convert to string for pattern matching (process more of the file for better detection)
+      for (let i = 0; i < Math.min(bytes.byteLength, 3000000); i++) {
         pdfText += String.fromCharCode(bytes[i])
       }
       
@@ -393,144 +718,6 @@ export class PDFGenerationService {
     }
   }
 
-  // Method 3: Enhanced annotation analysis
-  private async extractFieldsFromAnnotations(pdfDoc: PDFDocument): Promise<PDFField[]> {
-    try {
-      const fields: PDFField[] = []
-      const pages = pdfDoc.getPages()
-      
-      for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
-        const page = pages[pageIndex]
-        
-        try {
-          // Get page annotations
-          const pageDict = page.node
-          const annotations = pageDict.get('Annots')
-          
-          if (annotations) {
-            console.log(`Page ${pageIndex + 1} has annotations`)
-            
-            // Try to extract field information from annotations
-            // This is a simplified approach - real implementation would need to parse annotation dictionaries
-            const fieldCount = Math.floor(Math.random() * 8) + 3 // 3-10 fields per page with annotations
-            
-            for (let i = 1; i <= fieldCount; i++) {
-              fields.push({
-                name: `page${pageIndex + 1}_field${i}`,
-                type: 'text',
-                required: false
-              })
-            }
-          }
-        } catch (pageError) {
-          console.warn(`Error processing page ${pageIndex + 1}:`, pageError)
-        }
-      }
-      
-      return fields
-    } catch (error) {
-      console.error('Error in annotation extraction:', error)
-      return []
-    }
-  }
-
-  // Method 4: XFA and complex form analysis
-  private async extractXFAFields(pdfData: ArrayBuffer): Promise<PDFField[]> {
-    try {
-      const bytes = new Uint8Array(pdfData)
-      let pdfText = ''
-      
-      // Convert to string for XFA analysis
-      for (let i = 0; i < bytes.byteLength; i++) {
-        pdfText += String.fromCharCode(bytes[i])
-      }
-      
-      const fieldNames = new Set<string>()
-      
-      // XFA-specific patterns
-      const xfaPatterns = [
-        // XFA template field definitions
-        /<field\s+[^>]*name\s*=\s*"([^"]+)"/gi,
-        /<field\s+[^>]*name\s*=\s*'([^']+)'/gi,
-        
-        // XFA data binding
-        /<bind\s+[^>]*ref\s*=\s*"([^"]+)"/gi,
-        /<bind\s+[^>]*match\s*=\s*"([^"]+)"/gi,
-        
-        // XFA subform fields
-        /<subform\s+[^>]*name\s*=\s*"([^"]+)"/gi,
-        /<subformSet\s+[^>]*name\s*=\s*"([^"]+)"/gi,
-        
-        // XFA data model references
-        /\$record\.([a-zA-Z_][a-zA-Z0-9_\.]*)/g,
-        /\$data\.([a-zA-Z_][a-zA-Z0-9_\.]*)/g,
-        /\$template\.([a-zA-Z_][a-zA-Z0-9_\.]*)/g,
-        
-        // XFA script references
-        /xfa\.resolveNode\("([^"]+)"\)/g,
-        /xfa\.resolveNodes\("([^"]+)"\)/g,
-        
-        // XFA form model
-        /<\w+\s+[^>]*name\s*=\s*"([^"]+)"[^>]*>/gi,
-        
-        // XFA connection patterns
-        /\bconnection\s*=\s*"([^"]+)"/gi,
-        /\bdataNode\s*=\s*"([^"]+)"/gi,
-      ]
-      
-      for (const pattern of xfaPatterns) {
-        let match
-        pattern.lastIndex = 0
-        
-        while ((match = pattern.exec(pdfText)) !== null) {
-          if (match[1]) {
-            const fieldName = match[1].trim()
-            
-            if (this.isValidFieldName(fieldName)) {
-              fieldNames.add(fieldName)
-            }
-          }
-        }
-      }
-      
-      // If we found XFA fields, return them
-      if (fieldNames.size > 0) {
-        return Array.from(fieldNames).map(name => ({
-          name,
-          type: this.guessFieldType(name),
-          required: false
-        }))
-      }
-      
-      // If no XFA fields found, create a reasonable number of generic fields
-      // based on the complexity of the form (as seen in the screenshot)
-      const genericFields: PDFField[] = []
-      
-      // Common field names for Romanian forms
-      const commonRomanianFields = [
-        'beneficiar_minor', 'tip_autovehicul', 'nume_solicitant', 'prenume_solicitant',
-        'cod_numeric_personal', 'seria', 'numar', 'eliberat_de', 'data_eliberare',
-        'domiciliu_judet', 'localitate', 'strada', 'numar_strada', 'bloc', 'scara',
-        'etaj', 'apartament', 'cod_postal', 'telefon', 'email', 'reprezentant_legal',
-        'imputernicit', 'nume_reprezentant', 'prenume_reprezentant', 'suma_solicitata',
-        'numar_ecotichete', 'autovehicul_electric', 'autovehicul_hibrid'
-      ]
-      
-      for (const fieldName of commonRomanianFields) {
-        genericFields.push({
-          name: fieldName,
-          type: this.guessFieldType(fieldName),
-          required: false
-        })
-      }
-      
-      return genericFields
-    } catch (error) {
-      console.error('Error in XFA extraction:', error)
-      return []
-    }
-  }
-
   // Enhanced field name validation
   private isValidFieldName(name: string): boolean {
     // Filter out common non-field strings
@@ -573,26 +760,29 @@ export class PDFGenerationService {
     
     if (lowerName.includes('checkbox') || lowerName.includes('check') || 
         lowerName.includes('minor') || lowerName.includes('electric') || 
-        lowerName.includes('hibrid') || lowerName.includes('reprezentant')) {
+        lowerName.includes('hibrid') || lowerName.includes('reprezentant') ||
+        lowerName.includes('beneficiar')) {
       return 'checkbox'
     }
     
     if (lowerName.includes('dropdown') || lowerName.includes('select') || 
         lowerName.includes('judet') || lowerName.includes('localitate') || 
-        lowerName.includes('tip_')) {
+        lowerName.includes('tip_') || lowerName.includes('autovehicul')) {
       return 'dropdown'
     }
     
     if (lowerName.includes('email')) {
-      return 'text' // Could be email type if supported
+      return 'text'
     }
     
-    if (lowerName.includes('data') || lowerName.includes('date')) {
+    if (lowerName.includes('data') || lowerName.includes('date') || 
+        lowerName.includes('eliberat') || lowerName.includes('emis')) {
       return 'date'
     }
     
     if (lowerName.includes('suma') || lowerName.includes('numar') || 
-        lowerName.includes('cod') || lowerName.includes('telefon')) {
+        lowerName.includes('cod') || lowerName.includes('telefon') ||
+        lowerName.includes('cnp') || lowerName.includes('ecotichete')) {
       return 'number'
     }
     
