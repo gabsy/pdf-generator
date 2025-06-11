@@ -98,7 +98,6 @@ export class PDFGenerationService {
         ignoreEncryption: true,
         capNumbers: false,
         throwOnInvalidObject: false,
-        parseSpeed: 'slow', // Use slow parsing for better compatibility
         updateMetadata: false
       })
       
