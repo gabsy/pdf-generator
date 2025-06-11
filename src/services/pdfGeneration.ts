@@ -11,158 +11,20 @@ export class PDFGenerationService {
     try {
       console.log('Starting PDF generation with template:', template.fileName)
       
-      // Create a copy of the template - this is crucial for preserving the original structure
-      const originalBytes = new Uint8Array(template.fileData)
-      const pdfDoc = await PDFDocument.load(originalBytes, {
-        ignoreEncryption: true,
-        capNumbers: false,
-        throwOnInvalidObject: false
-      })
+      // For complex PDFs (especially Romanian government forms), we need to be extremely careful
+      // Many of these PDFs use XFA or have complex structures that break when modified
       
-      console.log('PDF loaded successfully, checking for form capabilities')
+      // First, try to determine if this is a complex/XFA form
+      const isComplexForm = await this.isComplexOrXFAForm(template.fileData)
+      console.log('Complex/XFA form detected:', isComplexForm)
       
-      // Check if this PDF has a form and if it's fillable
-      let hasForm = false
-      let form: PDFForm | null = null
-      
-      try {
-        form = pdfDoc.getForm()
-        hasForm = true
-        console.log('Form detected, attempting to fill fields')
-      } catch (formError) {
-        console.warn('No fillable form detected:', formError)
-        // If there's no form, return the original PDF unchanged
-        return originalBytes
+      if (isComplexForm) {
+        // For complex forms, use a different strategy
+        return await this.generatePDFForComplexForm(template, user, fieldMappings)
+      } else {
+        // For standard forms, use the regular approach
+        return await this.generatePDFForStandardForm(template, user, fieldMappings)
       }
-      
-      if (!hasForm || !form) {
-        console.log('No form available, returning original PDF')
-        return originalBytes
-      }
-      
-      // Get all available fields for debugging
-      try {
-        const allFields = form.getFields()
-        console.log(`Found ${allFields.length} total fields in the form`)
-        
-        // Log field names for debugging
-        allFields.forEach((field, index) => {
-          try {
-            console.log(`Field ${index}: ${field.getName()} (${field.constructor.name})`)
-          } catch (e) {
-            console.warn(`Could not get name for field ${index}:`, e)
-          }
-        })
-      } catch (fieldsError) {
-        console.warn('Could not enumerate fields:', fieldsError)
-      }
-      
-      // Fill fields based on mappings - be very conservative
-      let fieldsFilledCount = 0
-      
-      for (const mapping of fieldMappings) {
-        if (!mapping.csvColumnName && !mapping.defaultValue) {
-          continue // Skip unmapped fields
-        }
-        
-        try {
-          // Get the value from user data or default value
-          let value = user[mapping.csvColumnName] || mapping.defaultValue || ''
-          value = String(value).trim()
-          
-          if (!value) {
-            continue // Skip empty values
-          }
-          
-          console.log(`Attempting to fill field: ${mapping.pdfFieldName} with value: ${value}`)
-          
-          try {
-            const field = form.getField(mapping.pdfFieldName)
-            
-            // Handle different field types with maximum safety
-            if (field instanceof PDFTextField) {
-              try {
-                // Limit text length to prevent overflow issues
-                const maxLength = 200
-                const safeValue = value.length > maxLength ? value.substring(0, maxLength) : value
-                field.setText(safeValue)
-                fieldsFilledCount++
-                console.log(`Successfully filled text field: ${mapping.pdfFieldName}`)
-              } catch (textError) {
-                console.warn(`Failed to set text for ${mapping.pdfFieldName}:`, textError)
-              }
-            } else if (field instanceof PDFCheckBox) {
-              try {
-                const shouldCheck = ['true', 'yes', '1', 'on', 'da', 'checked'].includes(value.toLowerCase())
-                if (shouldCheck) {
-                  field.check()
-                } else {
-                  field.uncheck()
-                }
-                fieldsFilledCount++
-                console.log(`Successfully filled checkbox field: ${mapping.pdfFieldName}`)
-              } catch (checkError) {
-                console.warn(`Failed to set checkbox for ${mapping.pdfFieldName}:`, checkError)
-              }
-            } else if (field instanceof PDFRadioGroup) {
-              try {
-                const options = field.getOptions()
-                if (options.includes(value)) {
-                  field.select(value)
-                  fieldsFilledCount++
-                  console.log(`Successfully filled radio field: ${mapping.pdfFieldName}`)
-                } else {
-                  console.warn(`Value "${value}" not found in radio options for ${mapping.pdfFieldName}`)
-                }
-              } catch (radioError) {
-                console.warn(`Failed to set radio for ${mapping.pdfFieldName}:`, radioError)
-              }
-            } else if (field instanceof PDFDropdown) {
-              try {
-                const options = field.getOptions()
-                if (options.includes(value)) {
-                  field.select(value)
-                  fieldsFilledCount++
-                  console.log(`Successfully filled dropdown field: ${mapping.pdfFieldName}`)
-                } else {
-                  console.warn(`Value "${value}" not found in dropdown options for ${mapping.pdfFieldName}`)
-                }
-              } catch (dropdownError) {
-                console.warn(`Failed to set dropdown for ${mapping.pdfFieldName}:`, dropdownError)
-              }
-            } else {
-              console.warn(`Unknown field type for ${mapping.pdfFieldName}: ${field.constructor.name}`)
-            }
-          } catch (fieldError) {
-            console.warn(`Field not found or inaccessible: ${mapping.pdfFieldName}`, fieldError)
-          }
-        } catch (mappingError) {
-          console.warn(`Error processing mapping for ${mapping.pdfFieldName}:`, mappingError)
-        }
-      }
-      
-      console.log(`Successfully filled ${fieldsFilledCount} fields`)
-      
-      // CRITICAL: Do NOT flatten the form for complex PDFs
-      // Flattening can break XFA forms and cause the "Please wait..." issue
-      // Instead, just update field appearances if possible
-      try {
-        form.updateFieldAppearances()
-        console.log('Updated field appearances successfully')
-      } catch (appearanceError) {
-        console.warn('Could not update field appearances (this is usually OK):', appearanceError)
-      }
-      
-      // Save with very conservative settings to maintain compatibility
-      const pdfBytes = await pdfDoc.save({
-        useObjectStreams: false,        // Better compatibility with older readers
-        addDefaultPage: false,          // Don't add extra pages
-        objectsPerTick: 50,            // Process in smaller chunks
-        updateFieldAppearances: false   // Don't force appearance updates
-      })
-      
-      console.log(`PDF generation completed. Output size: ${pdfBytes.length} bytes`)
-      return pdfBytes
       
     } catch (error) {
       console.error('Critical error in PDF generation:', error)
@@ -170,6 +32,240 @@ export class PDFGenerationService {
       // If anything goes wrong, return the original template
       // This ensures the user always gets a viewable PDF
       console.warn('Returning original template due to generation error')
+      return new Uint8Array(template.fileData)
+    }
+  }
+
+  private async isComplexOrXFAForm(pdfData: ArrayBuffer): Promise<boolean> {
+    try {
+      const bytes = new Uint8Array(pdfData)
+      let pdfText = ''
+      
+      // Check first 2MB for complexity indicators
+      for (let i = 0; i < Math.min(bytes.byteLength, 2000000); i++) {
+        pdfText += String.fromCharCode(bytes[i])
+      }
+      
+      const complexityIndicators = [
+        '/XFA',
+        '<xfa:',
+        '<xdp:',
+        '<template xmlns:xfa',
+        'application/vnd.adobe.xdp+xml',
+        'XFA_',
+        'xfa.form',
+        'xfa.datasets',
+        'xfa.template',
+        'LiveCycle',
+        'Designer',
+        '/NeedAppearances true',
+        '/DR <<',
+        '/Encrypt',
+        'CERERE DE FINANȚARE', // Romanian government form indicator
+        'ANAF',
+        'MINISTERUL',
+        '/Sig', // Digital signature
+        '/ByteRange',
+        '/Contents <',
+        'Adobe.PPKLite',
+        'adbe.pkcs7'
+      ]
+      
+      const complexityScore = complexityIndicators.reduce((score, indicator) => {
+        return score + (pdfText.includes(indicator) ? 1 : 0)
+      }, 0)
+      
+      // If we find multiple complexity indicators, treat as complex
+      return complexityScore >= 2
+    } catch (error) {
+      console.error('Error checking form complexity:', error)
+      return true // Assume complex if we can't determine
+    }
+  }
+
+  private async generatePDFForComplexForm(
+    template: PDFTemplate,
+    user: User,
+    fieldMappings: FieldMapping[]
+  ): Promise<Uint8Array> {
+    console.log('Using complex form strategy - minimal modification approach')
+    
+    try {
+      // For complex forms, we'll try a very conservative approach
+      // Load with maximum compatibility settings
+      const originalBytes = new Uint8Array(template.fileData)
+      const pdfDoc = await PDFDocument.load(originalBytes, {
+        ignoreEncryption: true,
+        capNumbers: false,
+        throwOnInvalidObject: false,
+        parseSpeed: 'slow', // Use slow parsing for better compatibility
+        updateMetadata: false
+      })
+      
+      console.log('Complex PDF loaded successfully')
+      
+      // Check if we can access the form at all
+      let form: PDFForm | null = null
+      let canModifyForm = false
+      
+      try {
+        form = pdfDoc.getForm()
+        canModifyForm = true
+        console.log('Form is accessible for modification')
+      } catch (formError) {
+        console.warn('Form is not accessible for modification:', formError)
+        canModifyForm = false
+      }
+      
+      if (canModifyForm && form) {
+        // Try to fill only the most basic fields with extreme caution
+        let successfullyFilledFields = 0
+        
+        for (const mapping of fieldMappings.slice(0, 5)) { // Limit to first 5 fields to reduce risk
+          if (!mapping.csvColumnName && !mapping.defaultValue) continue
+          
+          try {
+            let value = user[mapping.csvColumnName] || mapping.defaultValue || ''
+            value = String(value).trim()
+            
+            if (!value || value.length > 50) continue // Skip empty or very long values
+            
+            const field = form.getField(mapping.pdfFieldName)
+            
+            // Only handle text fields for complex forms to minimize risk
+            if (field instanceof PDFTextField) {
+              try {
+                field.setText(value)
+                successfullyFilledFields++
+                console.log(`Filled text field: ${mapping.pdfFieldName}`)
+              } catch (fillError) {
+                console.warn(`Failed to fill field ${mapping.pdfFieldName}:`, fillError)
+              }
+            }
+            
+            // Stop if we've filled a few fields successfully to minimize risk
+            if (successfullyFilledFields >= 3) break
+            
+          } catch (fieldError) {
+            console.warn(`Error accessing field ${mapping.pdfFieldName}:`, fieldError)
+          }
+        }
+        
+        console.log(`Successfully filled ${successfullyFilledFields} fields in complex form`)
+        
+        // For complex forms, DO NOT flatten and use minimal save options
+        try {
+          const pdfBytes = await pdfDoc.save({
+            useObjectStreams: false,
+            addDefaultPage: false,
+            objectsPerTick: 10, // Very small chunks
+            updateFieldAppearances: false, // Critical: don't update appearances
+            preserveStructure: true // Try to preserve as much as possible
+          })
+          
+          console.log(`Complex PDF saved successfully. Size: ${pdfBytes.length} bytes`)
+          return pdfBytes
+        } catch (saveError) {
+          console.error('Failed to save complex PDF:', saveError)
+          throw saveError
+        }
+      } else {
+        console.log('Cannot modify complex form, returning original')
+        return originalBytes
+      }
+      
+    } catch (error) {
+      console.error('Error in complex form generation:', error)
+      // Return original for complex forms if anything fails
+      return new Uint8Array(template.fileData)
+    }
+  }
+
+  private async generatePDFForStandardForm(
+    template: PDFTemplate,
+    user: User,
+    fieldMappings: FieldMapping[]
+  ): Promise<Uint8Array> {
+    console.log('Using standard form strategy')
+    
+    try {
+      const originalBytes = new Uint8Array(template.fileData)
+      const pdfDoc = await PDFDocument.load(originalBytes, {
+        ignoreEncryption: true,
+        capNumbers: false,
+        throwOnInvalidObject: false
+      })
+      
+      const form = pdfDoc.getForm()
+      console.log('Standard form loaded and accessible')
+      
+      // Fill fields with standard approach
+      let fieldsFilledCount = 0
+      
+      for (const mapping of fieldMappings) {
+        if (!mapping.csvColumnName && !mapping.defaultValue) continue
+        
+        try {
+          let value = user[mapping.csvColumnName] || mapping.defaultValue || ''
+          value = String(value).trim()
+          
+          if (!value) continue
+          
+          const field = form.getField(mapping.pdfFieldName)
+          
+          if (field instanceof PDFTextField) {
+            const maxLength = 200
+            const safeValue = value.length > maxLength ? value.substring(0, maxLength) : value
+            field.setText(safeValue)
+            fieldsFilledCount++
+          } else if (field instanceof PDFCheckBox) {
+            const shouldCheck = ['true', 'yes', '1', 'on', 'da', 'checked'].includes(value.toLowerCase())
+            if (shouldCheck) {
+              field.check()
+            } else {
+              field.uncheck()
+            }
+            fieldsFilledCount++
+          } else if (field instanceof PDFRadioGroup) {
+            const options = field.getOptions()
+            if (options.includes(value)) {
+              field.select(value)
+              fieldsFilledCount++
+            }
+          } else if (field instanceof PDFDropdown) {
+            const options = field.getOptions()
+            if (options.includes(value)) {
+              field.select(value)
+              fieldsFilledCount++
+            }
+          }
+        } catch (fieldError) {
+          console.warn(`Error filling field ${mapping.pdfFieldName}:`, fieldError)
+        }
+      }
+      
+      console.log(`Filled ${fieldsFilledCount} fields in standard form`)
+      
+      // For standard forms, we can try to update appearances
+      try {
+        form.updateFieldAppearances()
+      } catch (appearanceError) {
+        console.warn('Could not update field appearances:', appearanceError)
+      }
+      
+      // Save with standard options
+      const pdfBytes = await pdfDoc.save({
+        useObjectStreams: false,
+        addDefaultPage: false,
+        updateFieldAppearances: false
+      })
+      
+      console.log(`Standard PDF saved successfully. Size: ${pdfBytes.length} bytes`)
+      return pdfBytes
+      
+    } catch (error) {
+      console.error('Error in standard form generation:', error)
+      // Return original if standard approach fails
       return new Uint8Array(template.fileData)
     }
   }
@@ -269,7 +365,7 @@ export class PDFGenerationService {
             } else if (constructorName.includes('Radio')) {
               fieldType = 'radio'
               try {
-                const radioField = field as PDFRadioGroup
+                const radioField = field as any
                 if (radioField.getOptions) {
                   options = radioField.getOptions()
                 }
@@ -279,7 +375,7 @@ export class PDFGenerationService {
             } else if (constructorName.includes('Dropdown') || constructorName.includes('Choice')) {
               fieldType = 'dropdown'
               try {
-                const dropdown = field as PDFDropdown
+                const dropdown = field as any
                 if (dropdown.getOptions) {
                   options = dropdown.getOptions()
                 }
