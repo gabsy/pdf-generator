@@ -1,6 +1,6 @@
 import React, { useCallback, useState, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, FileSpreadsheet, AlertCircle, CheckCircle, ArrowRight, Download } from 'lucide-react'
+import { Upload, FileSpreadsheet, AlertCircle, CheckCircle, ArrowRight, Download, RefreshCw, Users } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
@@ -22,6 +22,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [hasImportedUsers, setHasImportedUsers] = useState(false)
+  const [importMode, setImportMode] = useState<'new' | 'replace'>('new')
 
   // Check if users have been imported and we should show the mapping interface
   useEffect(() => {
@@ -130,13 +131,16 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
   const importUsers = async () => {
     if (!csvData) return
 
-    const users: User[] = csvData.data.map((row: any) => ({
+    const newUsers: User[] = csvData.data.map((row: any) => ({
       id: generateId(),
       ...row
     }))
 
+    // Determine final users list based on import mode
+    const finalUsers = importMode === 'replace' ? newUsers : [...section.users, ...newUsers]
+
     const hasTemplate = section.template
-    const newStatus = hasTemplate && users.length > 0 ? 'ready' : hasTemplate ? 'template-configured' : 'users-loaded'
+    const newStatus = hasTemplate && finalUsers.length > 0 ? 'ready' : hasTemplate ? 'template-configured' : 'users-loaded'
 
     // Use a promise to handle the mutation
     await new Promise<void>((resolve, reject) => {
@@ -144,14 +148,17 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
         {
           id: section.id,
           updates: {
-            users,
-            status: newStatus
+            users: finalUsers,
+            status: newStatus,
+            // Reset field mappings if replacing users and the CSV structure might be different
+            ...(importMode === 'replace' ? { fieldMappings: [] } : {})
           }
         },
         {
           onSuccess: () => {
             setCsvData(null)
             setHasImportedUsers(true)
+            setImportMode('new') // Reset to default mode
             resolve()
           },
           onError: (error: any) => {
@@ -177,6 +184,36 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
     }
   }
 
+  const exportCurrentUsers = () => {
+    if (section.users.length === 0) return
+
+    // Get all unique keys from all users (excluding id)
+    const allKeys = new Set<string>()
+    section.users.forEach(user => {
+      Object.keys(user).forEach(key => {
+        if (key !== 'id') allKeys.add(key)
+      })
+    })
+
+    const headers = Array.from(allKeys)
+    const csvContent = [
+      headers.join(','),
+      ...section.users.map(user => 
+        headers.map(header => `"${user[header] || ''}"`).join(',')
+      )
+    ].join('\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${section.name}_current_users.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   const getMappingStatus = () => {
     if (!section.template) return null
 
@@ -197,65 +234,138 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
 
   return (
     <div className="space-y-6">
-      {/* CSV Upload Section - Always show first */}
-      {!hasImportedUsers && (
-        <div className="bg-white rounded-lg border shadow-sm p-6">
-          <h2 className="text-xl font-semibold mb-4">CSV Data Import</h2>
-          
-          {!csvData ? (
-            <div className="space-y-4">
-              {/* Sample CSV Download */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <div className="flex items-start gap-3">
-                  <FileSpreadsheet className="h-5 w-5 text-blue-600 mt-0.5" />
-                  <div className="flex-1">
-                    <h4 className="font-medium text-blue-900 mb-2">Need Sample Data?</h4>
-                    <p className="text-sm text-blue-800 mb-3">
-                      Download sample CSV data that includes realistic employee information with all field types.
-                      You can use this data to test the application or as a template for your own data.
-                    </p>
-                    <Button
-                      onClick={() => downloadSampleCSV('sample_employee_data.csv')}
-                      size="sm"
-                      variant="outline"
-                      className="flex items-center gap-2"
-                    >
-                      <Download className="h-4 w-4" />
-                      Download Sample CSV Data
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              
-              <div
-                {...getRootProps()}
-                className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-                  isDragActive 
-                    ? 'border-blue-400 bg-blue-50' 
-                    : 'border-gray-300 hover:border-gray-400'
-                } ${(isProcessing || isUpdating) ? 'cursor-not-allowed opacity-50' : ''}`}
+      {/* CSV Upload Section */}
+      <div className="bg-white rounded-lg border shadow-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold">
+            {hasImportedUsers ? 'Update User Data' : 'CSV Data Import'}
+          </h2>
+          {hasImportedUsers && (
+            <div className="flex items-center gap-2">
+              <Badge variant="default" className="flex items-center gap-1">
+                <Users className="h-3 w-3" />
+                {section.users.length} Users
+              </Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={exportCurrentUsers}
+                className="flex items-center gap-2"
               >
-                <input {...getInputProps()} />
-                <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                <p className="text-lg font-medium text-gray-900 mb-2">
-                  {isDragActive ? 'Drop your CSV here' : 'Upload CSV Data'}
-                </p>
-                <p className="text-gray-600 mb-4">
-                  Upload a CSV file with user data. You can add a PDF template later for automated form filling.
-                </p>
-                <Button variant="outline" disabled={isProcessing || isUpdating}>
-                  {isProcessing ? 'Processing...' : 'Choose File'}
-                </Button>
-              </div>
-              
-              {error && (
-                <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <AlertCircle className="h-5 w-5 text-red-600" />
-                  <p className="text-red-800">{error}</p>
+                <Download className="h-4 w-4" />
+                Export Current
+              </Button>
+            </div>
+          )}
+        </div>
+        
+        {!csvData ? (
+          <div className="space-y-4">
+            {/* Import Mode Selection - Only show if users already exist */}
+            {hasImportedUsers && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h4 className="font-medium text-blue-900 mb-3">Import Mode</h4>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="importMode"
+                      value="new"
+                      checked={importMode === 'new'}
+                      onChange={(e) => setImportMode(e.target.value as 'new' | 'replace')}
+                      className="text-blue-600"
+                    />
+                    <span className="text-sm text-blue-800">
+                      <strong>Add to existing users</strong> - Keep current users and add new ones
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="importMode"
+                      value="replace"
+                      checked={importMode === 'replace'}
+                      onChange={(e) => setImportMode(e.target.value as 'new' | 'replace')}
+                      className="text-blue-600"
+                    />
+                    <span className="text-sm text-blue-800">
+                      <strong>Replace all users</strong> - Remove current users and import new ones
+                    </span>
+                  </label>
                 </div>
-              )}
+                {importMode === 'replace' && (
+                  <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+                    <strong>Warning:</strong> This will remove all {section.users.length} existing users and reset field mappings.
+                  </div>
+                )}
+              </div>
+            )}
 
-              {/* Info about workflow */}
+            {/* Sample CSV Download */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <FileSpreadsheet className="h-5 w-5 text-blue-600 mt-0.5" />
+                <div className="flex-1">
+                  <h4 className="font-medium text-blue-900 mb-2">Need Sample Data?</h4>
+                  <p className="text-sm text-blue-800 mb-3">
+                    Download sample CSV data that includes realistic employee information with all field types.
+                    You can use this data to test the application or as a template for your own data.
+                  </p>
+                  <Button
+                    onClick={() => downloadSampleCSV('sample_employee_data.csv')}
+                    size="sm"
+                    variant="outline"
+                    className="flex items-center gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    Download Sample CSV Data
+                  </Button>
+                </div>
+              </div>
+            </div>
+            
+            <div
+              {...getRootProps()}
+              className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+                isDragActive 
+                  ? 'border-blue-400 bg-blue-50' 
+                  : 'border-gray-300 hover:border-gray-400'
+              } ${(isProcessing || isUpdating) ? 'cursor-not-allowed opacity-50' : ''}`}
+            >
+              <input {...getInputProps()} />
+              {hasImportedUsers ? (
+                <RefreshCw className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              ) : (
+                <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              )}
+              <p className="text-lg font-medium text-gray-900 mb-2">
+                {isDragActive 
+                  ? 'Drop your CSV here' 
+                  : hasImportedUsers 
+                    ? 'Upload New CSV Data'
+                    : 'Upload CSV Data'
+                }
+              </p>
+              <p className="text-gray-600 mb-4">
+                {hasImportedUsers 
+                  ? `${importMode === 'replace' ? 'Replace' : 'Add to'} your current ${section.users.length} users with new CSV data`
+                  : 'Upload a CSV file with user data. You can add a PDF template later for automated form filling.'
+                }
+              </p>
+              <Button variant="outline" disabled={isProcessing || isUpdating}>
+                {isProcessing ? 'Processing...' : 'Choose File'}
+              </Button>
+            </div>
+            
+            {error && (
+              <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <AlertCircle className="h-5 w-5 text-red-600" />
+                <p className="text-red-800">{error}</p>
+              </div>
+            )}
+
+            {/* Info about workflow - Only show for new users */}
+            {!hasImportedUsers && (
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                 <h4 className="font-medium text-gray-900 mb-2">How it works:</h4>
                 <ul className="text-sm text-gray-700 space-y-1">
@@ -265,56 +375,71 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                   <li>• Generate personalized PDFs for each user</li>
                 </ul>
               </div>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <CheckCircle className="h-5 w-5 text-blue-600" />
-                  <div>
-                    <p className="font-medium text-blue-900">CSV Data Loaded</p>
-                    <p className="text-sm text-blue-700">
-                      {csvData.data.length} rows • {csvData.headers.length} columns
-                    </p>
-                  </div>
-                </div>
-                <Button onClick={() => setCsvData(null)} variant="outline" size="sm">
-                  Upload Different File
-                </Button>
-              </div>
-
-              <div className="grid gap-4">
-                <h3 className="text-lg font-semibold">Column Preview</h3>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                  {csvData.headers.map((header, index) => (
-                    <Badge key={index} variant="outline" className="justify-center">
-                      {header}
-                    </Badge>
-                  ))}
+            )}
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center gap-3">
+                <CheckCircle className="h-5 w-5 text-blue-600" />
+                <div>
+                  <p className="font-medium text-blue-900">CSV Data Loaded</p>
+                  <p className="text-sm text-blue-700">
+                    {csvData.data.length} rows • {csvData.headers.length} columns
+                    {hasImportedUsers && (
+                      <span className="ml-2">
+                        ({importMode === 'replace' 
+                          ? `Will replace ${section.users.length} existing users`
+                          : `Will add to ${section.users.length} existing users`
+                        })
+                      </span>
+                    )}
+                  </p>
                 </div>
               </div>
+              <Button onClick={() => setCsvData(null)} variant="outline" size="sm">
+                Upload Different File
+              </Button>
+            </div>
 
-              <div className="flex justify-end">
-                <Button 
-                  onClick={importUsers}
-                  disabled={isUpdating}
-                  className="flex items-center gap-2"
-                >
-                  {isUpdating ? 'Importing...' : 'Import Users'}
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
+            <div className="grid gap-4">
+              <h3 className="text-lg font-semibold">Column Preview</h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                {csvData.headers.map((header, index) => (
+                  <Badge key={index} variant="outline" className="justify-center">
+                    {header}
+                  </Badge>
+                ))}
               </div>
             </div>
-          )}
-        </div>
-      )}
+
+            <div className="flex justify-end">
+              <Button 
+                onClick={importUsers}
+                disabled={isUpdating}
+                className="flex items-center gap-2"
+              >
+                {isUpdating 
+                  ? 'Importing...' 
+                  : importMode === 'replace' 
+                    ? `Replace ${section.users.length} Users`
+                    : hasImportedUsers 
+                      ? `Add ${csvData.data.length} Users`
+                      : 'Import Users'
+                }
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Users Summary - Show if users are imported */}
-      {hasImportedUsers && (
+      {hasImportedUsers && !csvData && (
         <div className="bg-white rounded-lg border shadow-sm p-6">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-lg font-semibold">Imported Users</h3>
+              <h3 className="text-lg font-semibold">Current Users</h3>
               <p className="text-gray-600">
                 {section.users.length} users imported and ready for processing
               </p>
@@ -331,7 +456,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                 disabled={isUpdating}
                 className="text-red-600 hover:text-red-700"
               >
-                Clear Users & Reset
+                Clear All Users
               </Button>
             </div>
           </div>
@@ -339,7 +464,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
       )}
 
       {/* Field Mapping Section - Only show if template exists and users are imported */}
-      {section.template && hasImportedUsers && (
+      {section.template && hasImportedUsers && !csvData && (
         <div className="bg-white rounded-lg border shadow-sm p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold">Field Mapping</h3>
@@ -401,7 +526,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="--none--">No mapping</SelectItem>
-                            {Object.keys(section.users[0]).filter(key => key !== 'id').map((header) => (
+                            {Object.keys(section.users[0] || {}).filter(key => key !== 'id').map((header) => (
                               <SelectItem key={header} value={header}>
                                 {header}
                               </SelectItem>
@@ -433,7 +558,7 @@ export function DataConfiguration({ section }: DataConfigurationProps) {
       )}
 
       {/* Template Recommendation - Show if users imported but no template */}
-      {hasImportedUsers && !section.template && (
+      {hasImportedUsers && !section.template && !csvData && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
           <div className="flex items-start gap-3">
             <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
