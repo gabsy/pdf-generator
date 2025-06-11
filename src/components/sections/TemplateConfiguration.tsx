@@ -30,7 +30,7 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
 
     try {
       // Validate file type
-      if (file.type !== 'application/pdf') {
+      if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
         throw new Error(`Invalid file type: ${file.type}. Please upload a PDF file.`)
       }
 
@@ -212,7 +212,6 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
             updates: {
               template: null, // Explicitly set to null to trigger removal
               fieldMappings: [],
-              users: [], // Also clear users when removing template
               status: 'draft'
             }
           },
@@ -440,11 +439,27 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
               <AlertCircle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
               <h4 className="text-lg font-semibold text-gray-900 mb-2">No Form Fields Detected</h4>
               <p className="text-gray-600 mb-4">
-                This PDF doesn't appear to have fillable form fields. You can still use it, but you'll need to manually map data to field positions.
+                This PDF doesn't appear to have fillable form fields that could be automatically detected.
               </p>
-              <p className="text-sm text-gray-500">
-                To create fillable forms, use Adobe Acrobat or similar PDF editing software.
-              </p>
+              <div className="space-y-4">
+                <p className="text-sm text-gray-500 mb-2">
+                  You have a few options:
+                </p>
+                <ul className="text-sm text-gray-600 space-y-2 max-w-md mx-auto text-left">
+                  <li className="flex items-start gap-2">
+                    <span className="font-medium">1.</span>
+                    <span>Try the <strong>Advanced</strong> tab to use alternative field detection methods</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="font-medium">2.</span>
+                    <span>Manually add fields in the <strong>Advanced</strong> tab's Field Editor</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="font-medium">3.</span>
+                    <span>Use a different PDF with fillable form fields</span>
+                  </li>
+                </ul>
+              </div>
             </div>
           ) : (
             <>
