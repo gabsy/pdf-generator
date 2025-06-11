@@ -16,53 +16,61 @@ export async function extractXFAFormFields(pdfData: ArrayBuffer): Promise<string
     // Look for field patterns in XFA forms
     const fieldNames: string[] = []
     
-    // Pattern 1: Look for field names in XFA format
-    const xfaFieldRegex = /<field\s+name="([^"]+)"/gi
-    let match
-    while ((match = xfaFieldRegex.exec(pdfText)) !== null) {
-      fieldNames.push(match[1])
-    }
+    // Enhanced patterns for better field detection
+    const patterns = [
+      // XFA field patterns
+      /<field\s+name="([^"]+)"/gi,
+      /<field\s+name='([^']+)'/gi,
+      /<\w+:field\s+name="([^"]+)"/gi,
+      
+      // AcroForm patterns
+      /\/T\s*\(([^)]+)\)/g,
+      /\/TU\s*\(([^)]+)\)/g,
+      
+      // XFA binding patterns
+      /<bind\s+ref="([^"]+)"/gi,
+      /<bind\s+match="([^"]+)"/gi,
+      
+      // XFA data patterns
+      /\$record\.([a-zA-Z_][a-zA-Z0-9_]*)/g,
+      /\$data\.([a-zA-Z_][a-zA-Z0-9_]*)/g,
+      
+      // Form calculation patterns
+      /this\.getField\("([^"]+)"\)/g,
+      /this\.getField\('([^']+)'\)/g,
+      
+      // Widget annotation patterns
+      /\/Subtype\s*\/Widget.*?\/T\s*\(([^)]+)\)/gs,
+      
+      // XFA template patterns
+      /<subform\s+name="([^"]+)"/gi,
+      /<exclGroup\s+name="([^"]+)"/gi,
+      
+      // Alternative field reference patterns
+      /field\["([^"]+)"\]/g,
+      /field\['([^']+)'\]/g,
+      
+      // XFA connection patterns
+      /\bconnection="([^"]+)"/gi,
+      
+      // Form field dictionary patterns
+      /\/FT\s*\/\w+.*?\/T\s*\(([^)]+)\)/gs,
+    ]
     
-    // Pattern 2: Look for field names in AcroForm format
-    const acroFieldRegex = /\/T\s*\(([^)]+)\)/g
-    while ((match = acroFieldRegex.exec(pdfText)) !== null) {
-      fieldNames.push(match[1])
-    }
-    
-    // Pattern 3: Look for field names in XFA datasets
-    const xfaDatasetRegex = /<\w+:field\s+name="([^"]+)"/gi
-    while ((match = xfaDatasetRegex.exec(pdfText)) !== null) {
-      fieldNames.push(match[1])
-    }
-    
-    // Pattern 4: Look for field names in XFA templates
-    const xfaTemplateRegex = /<bind\s+match="([^"]+)"/gi
-    while ((match = xfaTemplateRegex.exec(pdfText)) !== null) {
-      fieldNames.push(match[1])
-    }
-    
-    // Pattern 5: Look for field names in XFA bindings
-    const xfaBindingRegex = /\bfield="([^"]+)"/gi
-    while ((match = xfaBindingRegex.exec(pdfText)) !== null) {
-      fieldNames.push(match[1])
-    }
-    
-    // Pattern 6: Look for field names in XFA connections
-    const xfaConnectionRegex = /\bconnection="([^"]+)"/gi
-    while ((match = xfaConnectionRegex.exec(pdfText)) !== null) {
-      fieldNames.push(match[1])
-    }
-    
-    // Pattern 7: Look for field names in XFA subforms
-    const xfaSubformRegex = /<subform\s+name="([^"]+)"/gi
-    while ((match = xfaSubformRegex.exec(pdfText)) !== null) {
-      fieldNames.push(match[1])
-    }
-    
-    // Pattern 8: Look for field names in XFA exData
-    const xfaExDataRegex = /<exData\s+name="([^"]+)"/gi
-    while ((match = xfaExDataRegex.exec(pdfText)) !== null) {
-      fieldNames.push(match[1])
+    for (const pattern of patterns) {
+      let match
+      pattern.lastIndex = 0 // Reset regex state
+      
+      while ((match = pattern.exec(pdfText)) !== null) {
+        if (match[1]) {
+          const fieldName = match[1].trim()
+          
+          // Validate field name
+          if (isValidFieldName(fieldName)) {
+            fieldNames.push(fieldName)
+          }
+        }
+      }
     }
     
     // Return unique field names
@@ -86,10 +94,19 @@ export async function isPDFUsingXFA(pdfData: ArrayBuffer): Promise<boolean> {
     }
     
     // Check for XFA indicators
-    return pdfText.includes('/XFA') || 
-           pdfText.includes('<xfa:') || 
-           pdfText.includes('<xdp:') ||
-           pdfText.includes('<template xmlns:xfa')
+    const xfaIndicators = [
+      '/XFA',
+      '<xfa:',
+      '<xdp:',
+      '<template xmlns:xfa',
+      'application/vnd.adobe.xdp+xml',
+      'XFA_',
+      'xfa.form',
+      'xfa.datasets',
+      'xfa.template'
+    ]
+    
+    return xfaIndicators.some(indicator => pdfText.includes(indicator))
   } catch (error) {
     console.error('Error checking for XFA:', error)
     return false
@@ -111,21 +128,64 @@ export async function deepScanPDFForFields(pdfData: ArrayBuffer): Promise<string
     
     const fieldNames: string[] = []
     
-    // Look for various field patterns
+    // Comprehensive patterns for field detection
     const patterns = [
-      /\/T\s*\(([^)]+)\)/g,  // AcroForm field names
-      /<field\s+name="([^"]+)"/gi,  // XFA field names
-      /TU\s*\(([^)]+)\)/g,  // Tool tip (often contains field names)
-      /\/V\s*\(([^)]+)\)/g,  // Field values (might indicate field names)
-      /\/Ff\s+(\d+)/g,       // Field flags
-      /\/FT\s+\/([A-Za-z]+)/g, // Field types
+      // Standard AcroForm patterns
+      /\/T\s*\(([^)]+)\)/g,
+      /\/TU\s*\(([^)]+)\)/g,
+      /\/V\s*\(([^)]+)\)/g,
+      
+      // XFA patterns
+      /<field\s+name="([^"]+)"/gi,
+      /<field\s+name='([^']+)'/gi,
+      /<\w+:field\s+name="([^"]+)"/gi,
+      
+      // Widget annotations
+      /\/Subtype\s*\/Widget.*?\/T\s*\(([^)]+)\)/gs,
+      
+      // Form field dictionaries
+      /\/FT\s*\/\w+.*?\/T\s*\(([^)]+)\)/gs,
+      
+      // JavaScript field references
+      /this\.getField\("([^"]+)"\)/g,
+      /this\.getField\('([^']+)'\)/g,
+      /event\.target\.name\s*==\s*"([^"]+)"/g,
+      
+      // XFA binding and data patterns
+      /<bind\s+ref="([^"]+)"/gi,
+      /<bind\s+match="([^"]+)"/gi,
+      /\$record\.([a-zA-Z_][a-zA-Z0-9_]*)/g,
+      /\$data\.([a-zA-Z_][a-zA-Z0-9_]*)/g,
+      
+      // Alternative field reference patterns
+      /field\["([^"]+)"\]/g,
+      /field\['([^']+)'\]/g,
+      /getField\("([^"]+)"\)/g,
+      
+      // Form calculation patterns
+      /calc\s*=\s*"([^"]+)"/gi,
+      /validate\s*=\s*"([^"]+)"/gi,
+      
+      // XFA subform patterns
+      /<subform\s+name="([^"]+)"/gi,
+      /<exclGroup\s+name="([^"]+)"/gi,
+      
+      // Data connection patterns
+      /\bconnection="([^"]+)"/gi,
+      /\bdataNode="([^"]+)"/gi,
     ]
     
     for (const pattern of patterns) {
       let match
+      pattern.lastIndex = 0
+      
       while ((match = pattern.exec(pdfText)) !== null) {
         if (match[1]) {
-          fieldNames.push(match[1])
+          const fieldName = match[1].trim()
+          
+          if (isValidFieldName(fieldName)) {
+            fieldNames.push(fieldName)
+          }
         }
       }
     }
@@ -151,15 +211,63 @@ export async function hasPDFFormElements(pdfData: ArrayBuffer): Promise<boolean>
     }
     
     // Check for form element indicators
-    return pdfText.includes('/AcroForm') || 
-           pdfText.includes('/Subtype/Form') || 
-           pdfText.includes('/Subtype/Widget') ||
-           pdfText.includes('/FT/Tx') ||  // Text field
-           pdfText.includes('/FT/Btn') || // Button field (checkbox, radio)
-           pdfText.includes('/FT/Ch') ||  // Choice field (dropdown, list)
-           pdfText.includes('/XFA')       // XFA form
+    const formIndicators = [
+      '/AcroForm',
+      '/Subtype/Form',
+      '/Subtype/Widget',
+      '/FT/Tx',  // Text field
+      '/FT/Btn', // Button field (checkbox, radio)
+      '/FT/Ch',  // Choice field (dropdown, list)
+      '/XFA',    // XFA form
+      'application/vnd.adobe.xdp+xml',
+      '<xfa:',
+      '<xdp:',
+      '<template',
+      '<field',
+      'xfa.form',
+      'xfa.datasets'
+    ]
+    
+    return formIndicators.some(indicator => pdfText.includes(indicator))
   } catch (error) {
     console.error('Error checking for form elements:', error)
     return false
   }
+}
+
+/**
+ * Helper function to validate field names
+ */
+function isValidFieldName(name: string): boolean {
+  // Filter out common non-field strings
+  const invalidPatterns = [
+    /^(form|data|template|subform|exData|bind|xfa|pdf|page|document|root|datasets|config)$/i,
+    /^[0-9]+$/,  // Pure numbers
+    /^\s*$/,     // Empty or whitespace
+    /[<>{}[\]]/,  // Contains XML/JSON brackets
+    /^(true|false|null|undefined|yes|no)$/i,  // Boolean/null values
+    /^(http|https|ftp|file):/i,  // URLs
+    /\.(pdf|xml|html|js|css|xdp|xfa)$/i,  // File extensions
+    /^(xmlns|version|encoding|standalone)$/i,  // XML attributes
+    /^(adobe|acrobat|reader|designer)$/i,  // Software names
+  ]
+  
+  // Check if name is too short or too long
+  if (name.length < 2 || name.length > 50) {
+    return false
+  }
+  
+  // Check against invalid patterns
+  for (const pattern of invalidPatterns) {
+    if (pattern.test(name)) {
+      return false
+    }
+  }
+  
+  // Must contain at least one letter
+  if (!/[a-zA-Z]/.test(name)) {
+    return false
+  }
+  
+  return true
 }
