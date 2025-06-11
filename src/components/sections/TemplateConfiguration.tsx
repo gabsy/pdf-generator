@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Section, PDFField } from '../../types'
 import { useSections } from '../../hooks/useSections'
 import { SamplePDFGenerator } from './SamplePDFGenerator'
-import { PDFDocument } from 'pdf-lib'
+import { PDFGenerationService } from '../../services/pdfGeneration'
 
 interface TemplateConfigurationProps {
   section: Section
@@ -55,90 +55,15 @@ export function TemplateConfiguration({ section }: TemplateConfigurationProps) {
       setUploadProgress('Loading PDF document...')
       setDebugInfo(prev => prev + `\nBuffer size: ${arrayBuffer.byteLength} bytes`)
       
-      let pdfDoc: PDFDocument
-      try {
-        pdfDoc = await PDFDocument.load(arrayBuffer)
-        console.log('PDF loaded successfully')
-      } catch (pdfError) {
-        console.error('PDF loading error:', pdfError)
-        throw new Error(`Invalid PDF file: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}`)
-      }
-      
+      // Use the PDFGenerationService to extract form fields
+      const pdfService = new PDFGenerationService()
       setUploadProgress('Extracting form fields...')
       
-      // Get page count
-      const pageCount = pdfDoc.getPageCount()
-      console.log('PDF page count:', pageCount)
-      setDebugInfo(prev => prev + `\nPages: ${pageCount}`)
+      const { fields: extractedFields, pageCount } = await pdfService.extractFormFields(arrayBuffer)
       
-      // Extract form fields
-      let form: any
-      let fields: any[] = []
+      console.log('Extracted fields:', extractedFields)
+      setDebugInfo(prev => prev + `\nPages: ${pageCount}\nForm fields: ${extractedFields.length}`)
       
-      try {
-        form = pdfDoc.getForm()
-        fields = form.getFields()
-        console.log('Form fields found:', fields.length)
-        setDebugInfo(prev => prev + `\nForm fields: ${fields.length}`)
-      } catch (formError) {
-        console.warn('No form found or error extracting form:', formError)
-        // Continue without form fields - this is not necessarily an error
-      }
-      
-      const extractedFields: PDFField[] = fields.map((field, index) => {
-        try {
-          const fieldName = field.getName()
-          const fieldType = field.constructor.name
-          
-          console.log(`Field ${index}:`, { name: fieldName, type: fieldType })
-          
-          let type: PDFField['type'] = 'text'
-          let options: string[] | undefined = undefined
-          
-          if (fieldType.includes('Checkbox')) {
-            type = 'checkbox'
-          } else if (fieldType.includes('Radio')) {
-            type = 'radio'
-            // Try to get radio button options
-            try {
-              const radioField = field as any
-              if (radioField.getOptions) {
-                options = radioField.getOptions()
-              }
-            } catch (e) {
-              console.warn('Could not extract radio options:', e)
-            }
-          } else if (fieldType.includes('Dropdown')) {
-            type = 'dropdown'
-            // Extract options from dropdown if available
-            try {
-              const dropdown = field as any
-              if (dropdown.getOptions) {
-                options = dropdown.getOptions()
-              }
-            } catch (e) {
-              console.warn('Could not extract dropdown options:', e)
-            }
-          } else if (fieldType.includes('Text')) {
-            type = 'text'
-          }
-          
-          return {
-            name: fieldName,
-            type,
-            required: false, // We'll assume all fields are optional by default
-            options
-          }
-        } catch (fieldError) {
-          console.error(`Error processing field ${index}:`, fieldError)
-          return {
-            name: `field_${index}`,
-            type: 'text' as const,
-            required: false
-          }
-        }
-      })
-
       setUploadProgress('Saving template...')
 
       const template = {

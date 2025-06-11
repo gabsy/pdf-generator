@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { ArrowLeft, FileText, Users, Settings } from 'lucide-react'
+import { ArrowLeft, FileText, Users, Settings, Wrench } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
@@ -8,6 +8,7 @@ import { useSectionsStore } from '../../store/sections'
 import { TemplateConfiguration } from './TemplateConfiguration'
 import { DataConfiguration } from './DataConfiguration'
 import { UsersList } from './UsersList'
+import { AdvancedTemplateOptions } from './AdvancedTemplateOptions'
 
 interface SectionDetailProps {
   sectionId: string
@@ -110,7 +111,7 @@ export function SectionDetail({ sectionId, onBack }: SectionDetailProps) {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full lg:w-auto grid-cols-3">
+        <TabsList className="grid w-full lg:w-auto grid-cols-4">
           <TabsTrigger value="template" className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
             Template
@@ -122,6 +123,10 @@ export function SectionDetail({ sectionId, onBack }: SectionDetailProps) {
           <TabsTrigger value="users" className="flex items-center gap-2">
             <Users className="h-4 w-4" />
             Users & Generation
+          </TabsTrigger>
+          <TabsTrigger value="advanced" className="flex items-center gap-2">
+            <Wrench className="h-4 w-4" />
+            Advanced
           </TabsTrigger>
         </TabsList>
 
@@ -135,6 +140,10 @@ export function SectionDetail({ sectionId, onBack }: SectionDetailProps) {
 
         <TabsContent value="users" className="mt-6">
           <UsersList section={currentSection} />
+        </TabsContent>
+
+        <TabsContent value="advanced" className="mt-6">
+          <AdvancedTemplateOptions section={currentSection} />
         </TabsContent>
       </Tabs>
     </div>
