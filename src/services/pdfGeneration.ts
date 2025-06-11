@@ -173,12 +173,14 @@ export class PDFGenerationService {
     try {
       const pdfDoc = await PDFDocument.load(pdfData)
       const pageCount = pdfDoc.getPageCount()
-      const extractedFields = []
+      let extractedFields: any[] = []
       
+      // First attempt: Try to get form fields using standard PDF-lib approach
       try {
-        // Try to get form fields
         const form = pdfDoc.getForm()
         const fields = form.getFields()
+        
+        console.log(`Found ${fields.length} fields using standard method`)
         
         for (const field of fields) {
           try {
@@ -210,44 +212,120 @@ export class PDFGenerationService {
           }
         }
       } catch (formError) {
-        console.warn('Error accessing form:', formError)
+        console.warn('Error accessing form using standard method:', formError)
       }
       
-      // If no fields were found using PDF-lib, try to extract field names from the PDF's internal structure
+      // If no fields were found using PDF-lib, try alternative extraction methods
       if (extractedFields.length === 0) {
         console.log('No fields found using standard method, attempting alternative extraction')
         
-        // This is a simplified approach - in a real implementation, you might need
-        // a more sophisticated PDF parsing library or service for XFA forms
-        try {
-          // Convert ArrayBuffer to string to search for field patterns
-          const bytes = new Uint8Array(pdfData)
-          let pdfText = ''
-          for (let i = 0; i < bytes.byteLength; i++) {
-            pdfText += String.fromCharCode(bytes[i])
-          }
+        // Convert ArrayBuffer to string to search for field patterns
+        const bytes = new Uint8Array(pdfData)
+        let pdfText = ''
+        
+        // Only convert a portion of the PDF to text to avoid memory issues with large files
+        const maxBytesToProcess = Math.min(bytes.byteLength, 5000000) // Process up to 5MB
+        for (let i = 0; i < maxBytesToProcess; i++) {
+          pdfText += String.fromCharCode(bytes[i])
+        }
+        
+        // Look for common field patterns in the PDF
+        const fieldPatterns = [
+          // AcroForm field names
+          /\/T\s*\(([^)]+)\)/g,
           
-          // Look for common field patterns in the PDF
-          // This is a very basic approach and might not work for all PDFs
-          const fieldRegex = /\/T\s*\(([^)]+)\)/g
+          // XFA field names
+          /<field\s+name="([^"]+)"/gi,
+          /<field\s+name='([^']+)'/gi,
+          
+          // Field names in XFA datasets
+          /<\w+:field\s+name="([^"]+)"/gi,
+          
+          // Field names in XFA templates
+          /<bind\s+match="([^"]+)"/gi,
+          
+          // Field names in XFA bindings
+          /\bfield="([^"]+)"/gi,
+          
+          // Field names in XFA connections
+          /\bconnection="([^"]+)"/gi,
+          
+          // Field names in XFA subforms
+          /<subform\s+name="([^"]+)"/gi,
+          
+          // Field names in XFA exData
+          /<exData\s+name="([^"]+)"/gi
+        ]
+        
+        const foundFields = new Set<string>()
+        
+        for (const pattern of fieldPatterns) {
           let match
-          const foundFields = new Set()
-          
-          while ((match = fieldRegex.exec(pdfText)) !== null) {
+          while ((match = pattern.exec(pdfText)) !== null) {
+            // Skip some common non-field names
             const fieldName = match[1]
-            if (!foundFields.has(fieldName)) {
+            if (!fieldName.includes(' ') && 
+                !['form', 'data', 'template', 'subform', 'exData', 'bind'].includes(fieldName.toLowerCase())) {
               foundFields.add(fieldName)
-              extractedFields.push({
-                name: fieldName,
-                type: 'text', // Default to text since we can't determine type
-                required: false
-              })
             }
           }
+        }
+        
+        // Convert found field names to our field format
+        extractedFields = Array.from(foundFields).map(name => ({
+          name,
+          type: 'text', // Default to text since we can't determine type
+          required: false
+        }))
+        
+        console.log(`Found ${extractedFields.length} fields using alternative method`)
+      }
+      
+      // If we still don't have fields, try one more approach - look for form field appearances
+      if (extractedFields.length === 0) {
+        console.log('Attempting deep extraction for form field appearances')
+        
+        // Convert ArrayBuffer to string again if needed
+        const bytes = new Uint8Array(pdfData)
+        let pdfText = ''
+        
+        // Only convert a portion of the PDF to text to avoid memory issues with large files
+        const maxBytesToProcess = Math.min(bytes.byteLength, 5000000) // Process up to 5MB
+        for (let i = 0; i < maxBytesToProcess; i++) {
+          pdfText += String.fromCharCode(bytes[i])
+        }
+        
+        // Look for field appearances in the PDF
+        const appearancePatterns = [
+          // Look for field appearances in the PDF
+          /\/AP\s*<<.*?>>/g,
           
-          console.log(`Found ${extractedFields.length} fields using alternative method`)
-        } catch (alternativeError) {
-          console.error('Alternative field extraction failed:', alternativeError)
+          // Look for widget annotations
+          /\/Widget\s*>>/g,
+          
+          // Look for form field values
+          /\/V\s*\(([^)]+)\)/g
+        ]
+        
+        let hasAppearances = false
+        for (const pattern of appearancePatterns) {
+          if (pattern.test(pdfText)) {
+            hasAppearances = true
+            break
+          }
+        }
+        
+        if (hasAppearances) {
+          console.log('Form field appearances detected, but field names could not be extracted')
+          
+          // Create generic field names based on page numbers
+          for (let i = 0; i < pageCount; i++) {
+            extractedFields.push({
+              name: `field_page${i+1}_1`,
+              type: 'text',
+              required: false
+            })
+          }
         }
       }
       
