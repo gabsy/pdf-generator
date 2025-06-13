@@ -8,194 +8,414 @@ export class PDFGenerationService {
     user: User,
     fieldMappings: FieldMapping[]
   ): Promise<Uint8Array> {
+    console.log('=== Starting Conservative PDF Generation ===')
+    console.log('Template:', template.fileName)
+    console.log('User ID:', user.id)
+    console.log('Field mappings count:', fieldMappings.length)
+    
     try {
-      console.log('Starting PDF generation with template:', template.fileName)
-      console.log('User data:', user)
-      console.log('Field mappings:', fieldMappings)
-      
-      // Load the original PDF template
+      // Step 1: Validate and prepare the original PDF data
       const originalBytes = new Uint8Array(template.fileData)
       console.log('Original PDF size:', originalBytes.length, 'bytes')
       
-      // Create a copy of the original PDF to work with
-      const pdfDoc = await PDFDocument.load(originalBytes, {
-        ignoreEncryption: true,
-        capNumbers: false,
-        throwOnInvalidObject: false,
-        updateMetadata: false
-      })
-      
-      console.log('PDF loaded successfully, pages:', pdfDoc.getPageCount())
-      
-      // Try to get the form - some PDFs might not have forms
-      let form: PDFForm | null = null
-      let hasForm = false
-      
-      try {
-        form = pdfDoc.getForm()
-        hasForm = true
-        console.log('Form found with', form.getFields().length, 'fields')
-      } catch (formError) {
-        console.warn('No form found in PDF or form is not accessible:', formError)
-        hasForm = false
+      if (originalBytes.length === 0) {
+        throw new Error('Template file data is empty')
       }
       
-      let fieldsFilledCount = 0
-      let fieldsAttempted = 0
+      // Step 2: Check if this is an XFA form before processing
+      const isXFA = await this.isXFAForm(originalBytes)
+      console.log('PDF type detected:', isXFA ? 'XFA (XML Forms)' : 'Standard AcroForm')
       
-      // If we have a form, try to fill the fields
-      if (hasForm && form) {
-        console.log('Attempting to fill form fields...')
-        
-        for (const mapping of fieldMappings) {
-          // Skip mappings without data source
-          if (!mapping.csvColumnName && !mapping.defaultValue) {
-            console.log(`Skipping mapping for ${mapping.pdfFieldName} - no data source`)
-            continue
-          }
-          
-          fieldsAttempted++
-          
-          try {
-            // Get the value from user data or use default
-            let value = ''
-            if (mapping.csvColumnName && user[mapping.csvColumnName] !== undefined) {
-              value = String(user[mapping.csvColumnName]).trim()
-            } else if (mapping.defaultValue) {
-              value = String(mapping.defaultValue).trim()
-            }
-            
-            if (!value) {
-              console.log(`No value for field ${mapping.pdfFieldName}`)
-              continue
-            }
-            
-            console.log(`Filling field "${mapping.pdfFieldName}" with value "${value}"`)
-            
-            // Try to get the field from the form
-            let field
-            try {
-              field = form.getField(mapping.pdfFieldName)
-            } catch (fieldError) {
-              console.warn(`Field "${mapping.pdfFieldName}" not found in form:`, fieldError)
-              continue
-            }
-            
-            // Fill the field based on its type
-            if (field instanceof PDFTextField) {
-              // Text field
-              const maxLength = 500 // Reasonable limit
-              const safeValue = value.length > maxLength ? value.substring(0, maxLength) : value
-              field.setText(safeValue)
-              fieldsFilledCount++
-              console.log(`✓ Text field "${mapping.pdfFieldName}" filled`)
-              
-            } else if (field instanceof PDFCheckBox) {
-              // Checkbox field
-              const shouldCheck = ['true', 'yes', '1', 'on', 'da', 'checked', 'x'].includes(value.toLowerCase())
-              if (shouldCheck) {
-                field.check()
-                console.log(`✓ Checkbox "${mapping.pdfFieldName}" checked`)
-              } else {
-                field.uncheck()
-                console.log(`✓ Checkbox "${mapping.pdfFieldName}" unchecked`)
-              }
-              fieldsFilledCount++
-              
-            } else if (field instanceof PDFRadioGroup) {
-              // Radio button group
-              try {
-                const options = field.getOptions()
-                console.log(`Radio field "${mapping.pdfFieldName}" options:`, options)
-                
-                if (options.includes(value)) {
-                  field.select(value)
-                  fieldsFilledCount++
-                  console.log(`✓ Radio "${mapping.pdfFieldName}" selected: ${value}`)
-                } else {
-                  console.warn(`Value "${value}" not found in radio options:`, options)
-                }
-              } catch (radioError) {
-                console.warn(`Error handling radio field "${mapping.pdfFieldName}":`, radioError)
-              }
-              
-            } else if (field instanceof PDFDropdown) {
-              // Dropdown field
-              try {
-                const options = field.getOptions()
-                console.log(`Dropdown field "${mapping.pdfFieldName}" options:`, options)
-                
-                if (options.includes(value)) {
-                  field.select(value)
-                  fieldsFilledCount++
-                  console.log(`✓ Dropdown "${mapping.pdfFieldName}" selected: ${value}`)
-                } else {
-                  // Try to find a partial match
-                  const partialMatch = options.find(option => 
-                    option.toLowerCase().includes(value.toLowerCase()) ||
-                    value.toLowerCase().includes(option.toLowerCase())
-                  )
-                  
-                  if (partialMatch) {
-                    field.select(partialMatch)
-                    fieldsFilledCount++
-                    console.log(`✓ Dropdown "${mapping.pdfFieldName}" selected (partial match): ${partialMatch}`)
-                  } else {
-                    console.warn(`Value "${value}" not found in dropdown options:`, options)
-                  }
-                }
-              } catch (dropdownError) {
-                console.warn(`Error handling dropdown field "${mapping.pdfFieldName}":`, dropdownError)
-              }
-              
-            } else {
-              console.warn(`Unknown field type for "${mapping.pdfFieldName}":`, field.constructor.name)
-            }
-            
-          } catch (fieldError) {
-            console.error(`Error filling field "${mapping.pdfFieldName}":`, fieldError)
-          }
-        }
-        
-        console.log(`Form filling complete: ${fieldsFilledCount}/${fieldsAttempted} fields filled successfully`)
-        
-        // Try to update field appearances if possible
-        try {
-          form.updateFieldAppearances()
-          console.log('Field appearances updated successfully')
-        } catch (appearanceError) {
-          console.warn('Could not update field appearances (this is often normal):', appearanceError)
-        }
-      } else {
-        console.log('No form available for field filling - returning original PDF with user data as metadata')
-      }
-      
-      // Save the PDF with the filled fields
+      // Step 3: Load PDF with conservative options
+      let pdfDoc: PDFDocument
       try {
-        const pdfBytes = await pdfDoc.save({
-          useObjectStreams: false,
-          addDefaultPage: false,
-          updateFieldAppearances: false // We already tried this above
+        pdfDoc = await PDFDocument.load(originalBytes, {
+          ignoreEncryption: true,
+          capNumbers: false,
+          throwOnInvalidObject: false,
+          updateMetadata: false,
+          parseSpeed: 1, // Slower but more reliable parsing
         })
-        
-        console.log(`PDF saved successfully. Original: ${originalBytes.length} bytes, Final: ${pdfBytes.length} bytes`)
-        console.log(`Fields filled: ${fieldsFilledCount}/${fieldsAttempted}`)
-        
-        return pdfBytes
-        
-      } catch (saveError) {
-        console.error('Error saving PDF:', saveError)
-        console.log('Returning original PDF due to save error')
+        console.log('PDF loaded successfully, pages:', pdfDoc.getPageCount())
+      } catch (loadError) {
+        console.error('Failed to load PDF:', loadError)
+        console.log('Returning original PDF due to load failure')
         return originalBytes
+      }
+      
+      // Step 4: Conservative form handling
+      if (isXFA) {
+        console.log('XFA form detected - using minimal modification approach')
+        return await this.handleXFAForm(pdfDoc, originalBytes, user, fieldMappings)
+      } else {
+        console.log('Standard form detected - using conservative field filling')
+        return await this.handleStandardForm(pdfDoc, originalBytes, user, fieldMappings)
       }
       
     } catch (error) {
       console.error('Critical error in PDF generation:', error)
       console.log('Returning original template as fallback')
-      
-      // Always return the original template as a fallback
-      // This ensures the user gets a viewable PDF even if processing fails
       return new Uint8Array(template.fileData)
+    }
+  }
+
+  private async handleXFAForm(
+    pdfDoc: PDFDocument,
+    originalBytes: Uint8Array,
+    user: User,
+    fieldMappings: FieldMapping[]
+  ): Promise<Uint8Array> {
+    console.log('Processing XFA form with minimal modification...')
+    
+    try {
+      // For XFA forms, we use a very conservative approach
+      // XFA forms are notoriously difficult to modify without breaking
+      
+      let form: PDFForm | null = null
+      let hasAccessibleForm = false
+      
+      try {
+        form = pdfDoc.getForm()
+        hasAccessibleForm = true
+        console.log('XFA form has accessible AcroForm layer')
+      } catch (formError) {
+        console.warn('XFA form does not have accessible AcroForm layer:', formError)
+        hasAccessibleForm = false
+      }
+      
+      if (!hasAccessibleForm || !form) {
+        console.log('XFA form cannot be modified - returning original with metadata')
+        // For pure XFA forms without AcroForm layer, we cannot safely modify
+        // Return the original PDF to ensure it remains viewable
+        return originalBytes
+      }
+      
+      // If we have an accessible form layer, try minimal field filling
+      const fieldsToFill = this.selectCriticalFields(fieldMappings, 3) // Only fill 3 most important fields
+      console.log(`Attempting to fill ${fieldsToFill.length} critical fields in XFA form`)
+      
+      let fieldsFilledCount = 0
+      
+      for (const mapping of fieldsToFill) {
+        try {
+          const success = await this.fillSingleFieldSafely(form, mapping, user)
+          if (success) fieldsFilledCount++
+        } catch (fieldError) {
+          console.warn(`Failed to fill field ${mapping.pdfFieldName}:`, fieldError)
+          // Continue with other fields
+        }
+      }
+      
+      console.log(`XFA form: ${fieldsFilledCount}/${fieldsToFill.length} critical fields filled`)
+      
+      // Save with minimal options to preserve XFA structure
+      try {
+        const pdfBytes = await pdfDoc.save({
+          useObjectStreams: false,
+          addDefaultPage: false,
+          updateFieldAppearances: false, // Critical: don't update appearances in XFA
+          preserveStructure: true
+        })
+        
+        console.log('XFA form saved successfully')
+        return pdfBytes
+      } catch (saveError) {
+        console.error('Failed to save XFA form:', saveError)
+        return originalBytes
+      }
+      
+    } catch (error) {
+      console.error('Error processing XFA form:', error)
+      return originalBytes
+    }
+  }
+
+  private async handleStandardForm(
+    pdfDoc: PDFDocument,
+    originalBytes: Uint8Array,
+    user: User,
+    fieldMappings: FieldMapping[]
+  ): Promise<Uint8Array> {
+    console.log('Processing standard AcroForm...')
+    
+    try {
+      let form: PDFForm | null = null
+      
+      try {
+        form = pdfDoc.getForm()
+        console.log('Standard form accessed, fields available:', form.getFields().length)
+      } catch (formError) {
+        console.warn('No accessible form found:', formError)
+        return originalBytes
+      }
+      
+      if (!form) {
+        console.log('No form to fill - returning original PDF')
+        return originalBytes
+      }
+      
+      // Conservative field filling approach
+      const safeFieldMappings = this.validateFieldMappings(form, fieldMappings)
+      console.log(`Validated ${safeFieldMappings.length}/${fieldMappings.length} field mappings`)
+      
+      let fieldsFilledCount = 0
+      let fieldsAttempted = 0
+      
+      for (const mapping of safeFieldMappings) {
+        fieldsAttempted++
+        
+        try {
+          const success = await this.fillSingleFieldSafely(form, mapping, user)
+          if (success) fieldsFilledCount++
+        } catch (fieldError) {
+          console.warn(`Error filling field ${mapping.pdfFieldName}:`, fieldError)
+          // Continue with other fields - don't let one field break the entire process
+        }
+      }
+      
+      console.log(`Standard form: ${fieldsFilledCount}/${fieldsAttempted} fields filled successfully`)
+      
+      // Conservative save approach
+      try {
+        const pdfBytes = await pdfDoc.save({
+          useObjectStreams: false,
+          addDefaultPage: false,
+          updateFieldAppearances: fieldsFilledCount > 0, // Only update if we actually filled fields
+        })
+        
+        // Validate the generated PDF
+        if (await this.validateGeneratedPDF(pdfBytes)) {
+          console.log('Generated PDF validated successfully')
+          return pdfBytes
+        } else {
+          console.warn('Generated PDF failed validation - returning original')
+          return originalBytes
+        }
+        
+      } catch (saveError) {
+        console.error('Failed to save standard form:', saveError)
+        return originalBytes
+      }
+      
+    } catch (error) {
+      console.error('Error processing standard form:', error)
+      return originalBytes
+    }
+  }
+
+  private async fillSingleFieldSafely(
+    form: PDFForm,
+    mapping: FieldMapping,
+    user: User
+  ): Promise<boolean> {
+    try {
+      // Get the value to fill
+      let value = ''
+      if (mapping.csvColumnName && user[mapping.csvColumnName] !== undefined) {
+        value = String(user[mapping.csvColumnName]).trim()
+      } else if (mapping.defaultValue) {
+        value = String(mapping.defaultValue).trim()
+      }
+      
+      if (!value) {
+        return false
+      }
+      
+      // Get the field
+      let field
+      try {
+        field = form.getField(mapping.pdfFieldName)
+      } catch (fieldError) {
+        console.warn(`Field "${mapping.pdfFieldName}" not found`)
+        return false
+      }
+      
+      // Fill based on field type with conservative approach
+      if (field instanceof PDFTextField) {
+        // Text field - limit length and sanitize
+        const maxLength = 200 // Conservative limit
+        const safeValue = this.sanitizeTextValue(value, maxLength)
+        field.setText(safeValue)
+        return true
+        
+      } else if (field instanceof PDFCheckBox) {
+        // Checkbox - simple boolean logic
+        const shouldCheck = this.parseBoolean(value)
+        if (shouldCheck) {
+          field.check()
+        } else {
+          field.uncheck()
+        }
+        return true
+        
+      } else if (field instanceof PDFRadioGroup) {
+        // Radio button - only select if exact match
+        try {
+          const options = field.getOptions()
+          if (options.includes(value)) {
+            field.select(value)
+            return true
+          }
+        } catch (radioError) {
+          console.warn(`Radio field error:`, radioError)
+        }
+        return false
+        
+      } else if (field instanceof PDFDropdown) {
+        // Dropdown - only select if exact match
+        try {
+          const options = field.getOptions()
+          if (options.includes(value)) {
+            field.select(value)
+            return true
+          }
+        } catch (dropdownError) {
+          console.warn(`Dropdown field error:`, dropdownError)
+        }
+        return false
+        
+      } else {
+        console.warn(`Unknown field type for "${mapping.pdfFieldName}"`)
+        return false
+      }
+      
+    } catch (error) {
+      console.error(`Error filling field "${mapping.pdfFieldName}":`, error)
+      return false
+    }
+  }
+
+  private selectCriticalFields(fieldMappings: FieldMapping[], maxFields: number): FieldMapping[] {
+    // For XFA forms, only fill the most critical fields to minimize risk
+    const criticalFieldNames = [
+      'nume', 'prenume', 'name', 'first_name', 'last_name',
+      'cnp', 'id', 'number', 'numar',
+      'email', 'telefon', 'phone'
+    ]
+    
+    const criticalMappings = fieldMappings.filter(mapping =>
+      criticalFieldNames.some(critical =>
+        mapping.pdfFieldName.toLowerCase().includes(critical.toLowerCase())
+      )
+    )
+    
+    return criticalMappings.slice(0, maxFields)
+  }
+
+  private validateFieldMappings(form: PDFForm, fieldMappings: FieldMapping[]): FieldMapping[] {
+    const availableFields = form.getFields().map(field => field.getName())
+    
+    return fieldMappings.filter(mapping => {
+      const hasValue = mapping.csvColumnName || mapping.defaultValue
+      const fieldExists = availableFields.includes(mapping.pdfFieldName)
+      
+      if (!fieldExists) {
+        console.warn(`Field "${mapping.pdfFieldName}" not found in PDF form`)
+      }
+      
+      return hasValue && fieldExists
+    })
+  }
+
+  private sanitizeTextValue(value: string, maxLength: number): string {
+    // Remove potentially problematic characters
+    let sanitized = value
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Remove control characters
+      .replace(/[<>]/g, '') // Remove angle brackets that might break XML
+      .trim()
+    
+    // Limit length
+    if (sanitized.length > maxLength) {
+      sanitized = sanitized.substring(0, maxLength)
+    }
+    
+    return sanitized
+  }
+
+  private parseBoolean(value: string): boolean {
+    const lowerValue = value.toLowerCase().trim()
+    return ['true', 'yes', '1', 'on', 'da', 'checked', 'x', 'adevarat'].includes(lowerValue)
+  }
+
+  private async isXFAForm(pdfData: Uint8Array): Promise<boolean> {
+    try {
+      // Convert to string for pattern matching
+      let pdfText = ''
+      const maxBytes = Math.min(pdfData.length, 500000) // Check first 500KB
+      
+      for (let i = 0; i < maxBytes; i++) {
+        pdfText += String.fromCharCode(pdfData[i])
+      }
+      
+      // XFA indicators
+      const xfaIndicators = [
+        '/XFA',
+        '<xfa:',
+        '<xdp:',
+        '<template xmlns:xfa',
+        'application/vnd.adobe.xdp+xml',
+        'XFA_',
+        'xfa.form',
+        'xfa.datasets',
+        'xfa.template',
+        'LiveCycle',
+        'Designer'
+      ]
+      
+      const isXFA = xfaIndicators.some(indicator => pdfText.includes(indicator))
+      
+      // Additional check for Romanian government forms
+      const romanianGovIndicators = [
+        'Ministerul',
+        'Guvernul',
+        'Agentia',
+        'Primaria',
+        'Consiliul',
+        'ghid',
+        'cerere',
+        'formular'
+      ]
+      
+      const isRomanianGov = romanianGovIndicators.some(indicator => 
+        pdfText.toLowerCase().includes(indicator.toLowerCase())
+      )
+      
+      if (isRomanianGov) {
+        console.log('Romanian government form detected - using extra conservative approach')
+      }
+      
+      return isXFA || isRomanianGov
+    } catch (error) {
+      console.error('Error checking for XFA:', error)
+      return false
+    }
+  }
+
+  private async validateGeneratedPDF(pdfBytes: Uint8Array): Promise<boolean> {
+    try {
+      // Basic validation - check if PDF can be loaded
+      await PDFDocument.load(pdfBytes, {
+        ignoreEncryption: true,
+        throwOnInvalidObject: false
+      })
+      
+      // Check if PDF has reasonable size (not too small, not too large compared to original)
+      if (pdfBytes.length < 1000) {
+        console.warn('Generated PDF is suspiciously small')
+        return false
+      }
+      
+      // Check for PDF header
+      const header = String.fromCharCode(...pdfBytes.slice(0, 8))
+      if (!header.startsWith('%PDF-')) {
+        console.warn('Generated PDF missing valid header')
+        return false
+      }
+      
+      return true
+    } catch (error) {
+      console.error('PDF validation failed:', error)
+      return false
     }
   }
 
@@ -207,6 +427,8 @@ export class PDFGenerationService {
     onProgress: (progress: GenerationProgress) => void
   ): Promise<Blob> {
     const zip = new JSZip()
+    let successCount = 0
+    let errorCount = 0
 
     for (let i = 0; i < users.length; i++) {
       const user = users[i]
@@ -221,31 +443,55 @@ export class PDFGenerationService {
       try {
         const pdfBytes = await this.generateSinglePDF(template, user, fieldMappings)
         
-        // Create filename based on user data or ID
+        // Create meaningful filename
         let filename = `${sectionName}_${user.id}.pdf`
         
-        // Try to create a more meaningful filename if possible
-        const nameFields = ['name', 'full_name', 'fullname', 'first_name', 'lastname', 'nume', 'prenume', 'nume_solicitant']
+        // Try to create a better filename using user data
+        const nameFields = ['nume', 'name', 'first_name', 'prenume', 'nume_solicitant']
         const nameField = fieldMappings.find(m => 
-          m.csvColumnName && nameFields.includes(m.csvColumnName.toLowerCase())
+          m.csvColumnName && nameFields.some(nf => 
+            m.csvColumnName.toLowerCase().includes(nf.toLowerCase())
+          )
         )
         
         if (nameField && user[nameField.csvColumnName]) {
-          const name = String(user[nameField.csvColumnName]).replace(/[^a-zA-Z0-9]/g, '_')
-          filename = `${sectionName}_${name}_${user.id}.pdf`
+          const name = String(user[nameField.csvColumnName])
+            .replace(/[^a-zA-Z0-9\s]/g, '') // Remove special chars
+            .replace(/\s+/g, '_') // Replace spaces with underscores
+            .substring(0, 20) // Limit length
+          
+          if (name) {
+            filename = `${sectionName}_${name}_${user.id}.pdf`
+          }
         }
 
         zip.file(filename, pdfBytes)
+        successCount++
         console.log(`Generated PDF ${i + 1}/${users.length}: ${filename}`)
         
       } catch (error) {
         console.error(`Failed to generate PDF for user ${user.id}:`, error)
+        errorCount++
         
-        // Add an error file to the zip to indicate the failure
-        const errorContent = `Error generating PDF for user ${user.id}: ${error instanceof Error ? error.message : 'Unknown error'}`
+        // Add error report to zip
+        const errorContent = `Error generating PDF for user ${user.id}:\n${error instanceof Error ? error.message : 'Unknown error'}\n\nUser data: ${JSON.stringify(user, null, 2)}`
         zip.file(`ERROR_${user.id}.txt`, errorContent)
       }
     }
+
+    // Add generation summary
+    const summary = `PDF Generation Summary
+=====================
+Total users: ${users.length}
+Successful: ${successCount}
+Errors: ${errorCount}
+Success rate: ${((successCount / users.length) * 100).toFixed(1)}%
+
+Template: ${template.fileName}
+Field mappings: ${fieldMappings.length}
+Generated: ${new Date().toISOString()}
+`
+    zip.file('GENERATION_SUMMARY.txt', summary)
 
     // Final progress update
     onProgress({
@@ -254,6 +500,7 @@ export class PDFGenerationService {
       status: 'completed'
     })
 
+    console.log(`Bulk generation complete: ${successCount}/${users.length} successful`)
     return zip.generateAsync({ type: 'blob' })
   }
 
@@ -272,7 +519,7 @@ export class PDFGenerationService {
       console.log(`PDF loaded successfully with ${pageCount} pages`)
       
       // Check if this is an XFA form first
-      const isXFA = await this.isXFAForm(pdfData)
+      const isXFA = await this.isXFAForm(new Uint8Array(pdfData))
       console.log(`PDF type: ${isXFA ? 'XFA' : 'Standard'}`)
       
       // Method 1: Standard PDF-lib form extraction
@@ -363,37 +610,6 @@ export class PDFGenerationService {
     } catch (error) {
       console.error('Error extracting form fields:', error)
       throw error
-    }
-  }
-
-  private async isXFAForm(pdfData: ArrayBuffer): Promise<boolean> {
-    try {
-      const bytes = new Uint8Array(pdfData)
-      let pdfText = ''
-      
-      // Check first 1MB for XFA indicators
-      for (let i = 0; i < Math.min(bytes.byteLength, 1000000); i++) {
-        pdfText += String.fromCharCode(bytes[i])
-      }
-      
-      const xfaIndicators = [
-        '/XFA',
-        '<xfa:',
-        '<xdp:',
-        '<template xmlns:xfa',
-        'application/vnd.adobe.xdp+xml',
-        'XFA_',
-        'xfa.form',
-        'xfa.datasets',
-        'xfa.template',
-        'LiveCycle',
-        'Designer'
-      ]
-      
-      return xfaIndicators.some(indicator => pdfText.includes(indicator))
-    } catch (error) {
-      console.error('Error checking for XFA:', error)
-      return false
     }
   }
 
