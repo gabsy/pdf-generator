@@ -50,7 +50,17 @@ export function AuthPage() {
     if (error?.message?.includes('over_email_send_rate_limit')) {
       handleRateLimitError(error.message)
     } else {
-      setError(error?.message || 'An unexpected error occurred')
+      // Show user-friendly error message
+      let errorMessage = 'An error occurred during sign in.';
+      if (error.message.includes('Invalid login credentials')) {
+        errorMessage = 'Invalid email or password. Please check your credentials and try again.';
+      } else if (error.message.includes('Email not confirmed')) {
+        errorMessage = 'Please check your email and click the confirmation link before signing in.';
+      } else if (error.message.includes('Too many requests')) {
+        errorMessage = 'Too many login attempts. Please wait a few minutes before trying again.';
+      }
+      
+      setError(errorMessage)
     }
   }
 
