@@ -63,6 +63,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const signOut = async () => {
+        // Provide user-friendly error messages
+        let userMessage = error.message;
+        if (error.message.includes('Invalid login credentials')) {
+          userMessage = 'Invalid email or password. Please check your credentials and try again.';
+        } else if (error.message.includes('Email not confirmed')) {
+          userMessage = 'Please check your email and click the confirmation link before signing in.';
+        } else if (error.message.includes('Too many requests')) {
+          userMessage = 'Too many login attempts. Please wait a few minutes before trying again.';
+        }
+        
+        console.error('Authentication error:', error);
     const { error } = await supabase.auth.signOut()
     return { error }
   }
