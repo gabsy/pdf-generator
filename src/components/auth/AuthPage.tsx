@@ -107,7 +107,7 @@ export function AuthPage() {
     if (error) {
       handleAuthError(error)
     } else {
-      setError('Check your email for a confirmation link!')
+      setError('Account created successfully! You can now sign in.')
     }
     
     setIsLoading(false)
